@@ -1321,6 +1321,341 @@ async function saveCloudProductRecord(existing, product) {
   return { ...product, id: data.id, slug: data.slug, imageUrls, images: imageUrls, createdAt: data.created_at, updatedAt: data.updated_at };
 }
 
+function isUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ""));
+}
+
+function cloudOperationId() {
+  return crypto?.randomUUID ? crypto.randomUUID() : uid("operation");
+}
+
+function isoDateFromTimestamp(value) {
+  if (!value) return todayIso();
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? todayIso() : localIsoDate(date);
+}
+
+function cloudTimestampFromDate(value) {
+  const date = normalizeDateInput(value) || todayIso();
+  return `${date}T12:00:00-03:00`;
+}
+
+function normalizeCloudCustomer(row = {}, initialPayments = []) {
+  return {
+    id: row.id,
+    name: normalizeCustomerName(row.name || ""),
+    dni: normalizeCustomerDni(row.dni || ""),
+    phone: row.phone || "",
+    province: normalizeProvince(row.city || row.province || ""),
+    notes: row.notes || "",
+    initialDebt: Math.max(0, Number(row.initial_debt || 0)),
+    initialDebtPayments: normalizeSaleDebtPayments(initialPayments),
+    createdAt: row.created_at || "",
+    updatedAt: row.updated_at || row.created_at || "",
+  };
+}
+
+function normalizeCloudPayment(row = {}) {
+  return {
+    id: row.id,
+    date: isoDateFromTimestamp(row.paid_at || row.created_at),
+    amount: Number(row.amount || 0),
+    paymentMethod: row.method || "efectivo",
+    notes: row.note || "",
+    createdAt: row.created_at || row.paid_at || new Date().toISOString(),
+  };
+}
+
+function normalizeCloudSale(row = {}) {
+  const paymentRows = row.payments || [];
+  const initialPayment = paymentRows.find((payment) => String(payment.note || "").includes("Pago registrado al crear la venta"));
+  const debtPayments = paymentRows
+    .filter((payment) => payment.id !== initialPayment?.id)
+    .map(normalizeCloudPayment);
+  const items = (row.sale_items || []).map((item) => {
+    const product = state.products.find((entry) => entry.id === item.product_id);
+    return {
+      productId: item.product_id || "",
+      variantId: item.variant_id || "",
+      code: item.sku || product?.code || "",
+      description: item.product_name || product?.description || "Producto",
+      category: product?.category || "Manual",
+      subcategory: product?.subcategory || "",
+      color: item.color || product?.color || "",
+      size: item.size || "",
+      quantity: Number(item.quantity || 0),
+      unitPrice: Number(item.unit_price || 0),
+      unitCost: Number(item.unit_cost || 0),
+      tracksStock: Boolean(item.variant_id),
+      manual: !item.product_id,
+    };
+  });
+  return {
+    id: row.id,
+    localOrderNumber: row.local_order_number,
+    date: isoDateFromTimestamp(row.sold_at || row.created_at),
+    channel: "local",
+    source: "mostrador",
+    total: Number(row.total || 0),
+    paidAmount: Number(initialPayment?.amount ?? row.paid_amount ?? row.total ?? 0),
+    debtPayments,
+    syncStatus: "synced",
+    saleType: "minorista",
+    paymentMethod: row.payment_method || "",
+    skipPaymentAdjustment: false,
+    manualTotalEnabled: Boolean(row.manual_total_enabled),
+    manualTotal: row.manual_total_enabled ? Number(row.total || 0) : "",
+    items,
+    reference: "",
+    customerId: row.customer_id || "",
+    customerName: "",
+    notes: row.notes || "",
+    createdAt: row.created_at || row.sold_at || "",
+    updatedAt: row.created_at || row.sold_at || "",
+  };
+}
+
+function normalizeCloudExpense(row = {}) {
+  return {
+    id: row.id,
+    date: isoDateFromTimestamp(row.expense_at || row.created_at),
+    concept: row.note || row.category || "Gasto",
+    category: row.category || "Otros",
+    kind: "variable",
+    area: "local",
+    amount: Number(row.amount || 0),
+    paymentMethod: row.payment_method || "",
+    createdAt: row.created_at || "",
+  };
+}
+
+function normalizeCloudStockMovement(row = {}) {
+  const product = state.products.find((entry) => entry.id === row.product_id);
+  const variant = product?.sizeVariants?.find((entry) => entry.id === row.variant_id);
+  const typeMap = {
+    initial: "entrada",
+    purchase: "entrada",
+    sale: "venta",
+    adjustment: "ajuste",
+    return: "ajuste",
+    gift: "ajuste",
+  };
+  return {
+    id: row.id,
+    date: isoDateFromTimestamp(row.created_at),
+    productId: row.product_id || "",
+    productCode: product?.code || "",
+    productName: product?.description || "Producto",
+    variantId: row.variant_id || "",
+    size: variant?.size || "",
+    type: typeMap[row.movement_type] || "ajuste",
+    quantity: Number(row.quantity_delta || 0),
+    stockAfter: Number(row.stock_after || 0),
+    note: row.note || "",
+    unitCost: Number(row.unit_cost || 0),
+  };
+}
+
+async function loadCloudOperationalData() {
+  if (!cloudEnabledWithSession()) return false;
+  const [{ data: customers, error: customersError }, { data: sales, error: salesError }, { data: expenses, error: expensesError }, { data: stock, error: stockError }, { data: initialPayments, error: paymentsError }] = await Promise.all([
+    supabaseClient.from("customers").select("*").is("archived_at", null).order("created_at", { ascending: false }),
+    supabaseClient
+      .from("sales")
+      .select("*,sale_items(*),payments(*)")
+      .is("archived_at", null)
+      .order("sold_at", { ascending: false }),
+    supabaseClient.from("expenses").select("*").is("archived_at", null).order("expense_at", { ascending: false }),
+    supabaseClient.from("stock_movements").select("*").order("created_at", { ascending: false }).limit(STOCK_HISTORY_LIMIT),
+    supabaseClient.from("payments").select("*").is("sale_id", null).order("paid_at", { ascending: false }),
+  ]);
+  if (customersError) throw new Error(`clientes: ${customersError.message}`);
+  if (salesError) throw new Error(`ventas: ${salesError.message}`);
+  if (expensesError) throw new Error(`gastos: ${expensesError.message}`);
+  if (stockError) throw new Error(`stock: ${stockError.message}`);
+  if (paymentsError) throw new Error(`pagos: ${paymentsError.message}`);
+
+  const initialPaymentsByCustomer = new Map();
+  (initialPayments || []).forEach((payment) => {
+    if (!payment.customer_id) return;
+    const list = initialPaymentsByCustomer.get(payment.customer_id) || [];
+    list.push(normalizeCloudPayment(payment));
+    initialPaymentsByCustomer.set(payment.customer_id, list);
+  });
+  state.customers = (customers || []).map((customer) => normalizeCloudCustomer(customer, initialPaymentsByCustomer.get(customer.id) || []));
+  const customersById = new Map(state.customers.map((customer) => [customer.id, customer]));
+  state.sales = (sales || []).map(normalizeCloudSale).map((sale) => ({
+    ...sale,
+    customerName: customersById.get(sale.customerId)?.name || "",
+    reference: customersById.get(sale.customerId)?.name || "",
+  }));
+  state.expenses = (expenses || [])
+    .filter((expense) => expense.category !== "CompraMercaderia")
+    .map(normalizeCloudExpense);
+  state.purchases = (expenses || [])
+    .filter((expense) => expense.category === "CompraMercaderia")
+    .map((expense) => ({
+      id: expense.id,
+      date: isoDateFromTimestamp(expense.expense_at || expense.created_at),
+      supplier: expense.note || "Compra de Mercadería",
+      category: "CompraMercaderia",
+      behavior: "variable",
+      area: "local",
+      amount: Number(expense.amount || 0),
+      notes: expense.note || "",
+      stockEntryId: expense.operation_id || "",
+    }));
+  state.stockHistory = (stock || []).map(normalizeCloudStockMovement).reverse();
+  persistStateLocalOnly();
+  return true;
+}
+
+async function loadCloudData() {
+  await loadCloudProductCatalog();
+  await loadCloudOperationalData();
+  persistStateLocalOnly();
+  return true;
+}
+
+async function saveCloudCustomerRecord(existing, payload) {
+  if (!cloudEnabledWithSession()) return { id: existing?.id || uid("customer"), ...payload };
+  const row = {
+    name: payload.name,
+    dni: normalizeCustomerDni(payload.dni || ""),
+    phone: payload.phone || "",
+    city: normalizeProvince(payload.province || ""),
+    notes: payload.notes || "",
+    initial_debt: Math.max(0, Number(payload.initialDebt || 0)),
+    updated_by: supabaseSession.user.id,
+  };
+  const query = existing?.id && isUuid(existing.id)
+    ? supabaseClient.from("customers").update(row).eq("id", existing.id).select("*").single()
+    : supabaseClient.from("customers").insert({ ...row, created_by: supabaseSession.user.id }).select("*").single();
+  const { data, error } = await query;
+  if (error) throw new Error(`guardar cliente: ${error.message}`);
+  return normalizeCloudCustomer(data, existing?.initialDebtPayments || []);
+}
+
+async function ensureCloudCustomer(customer) {
+  if (!customer || !cloudEnabledWithSession()) return customer || null;
+  if (isUuid(customer.id)) return customer;
+  const saved = await saveCloudCustomerRecord(null, customer);
+  const previousId = customer.id;
+  Object.assign(customer, saved);
+  state.carts.forEach((cart) => {
+    if (cart.customerId === previousId) cart.customerId = saved.id;
+  });
+  return customer;
+}
+
+function cloudSaleItemsFromCart(cart) {
+  return (cart.items || []).map((item) => {
+    const product = state.products.find((entry) => entry.id === item.productId);
+    if (!product || !isUuid(product.id)) {
+      throw new Error(`El item "${item.description || "Manual"}" no está vinculado a un producto de Supabase.`);
+    }
+    const variant = item.size
+      ? normalizeProductSizeVariants(product.sizeVariants).find((entry) => entry.size === item.size)
+      : null;
+    if (product.tracksStock && !variant?.id) {
+      throw new Error(`El producto ${product.description} requiere una variedad/talle válido.`);
+    }
+    return {
+      product_id: product.id,
+      variant_id: variant?.id || null,
+      quantity: Number(item.quantity || 1),
+      unit_price: Number(item.unitPrice || product.price || 0),
+      unit_cost: Number(item.unitCost || product.cost || 0),
+    };
+  });
+}
+
+async function saveCloudLocalSale(cart, customer) {
+  if (!cloudEnabledWithSession()) throw new Error("Ingresá con tu usuario BlackShoes para registrar ventas.");
+  const { data, error } = await supabaseClient.rpc("create_sale", {
+    p_operation_id: cloudOperationId(),
+    p_customer_id: customer?.id && isUuid(customer.id) ? customer.id : null,
+    p_paid_amount: cartPaidAmount(cart),
+    p_payment_method: cart.paymentMethod || "",
+    p_manual_total: cart.manualTotalEnabled ? cartTotal(cart) : null,
+    p_notes: cart.reference || "",
+    p_items: cloudSaleItemsFromCart(cart),
+  });
+  if (error) throw new Error(`registrar venta: ${error.message}`);
+  return data;
+}
+
+async function saveCloudCustomerPayment({ customer, sale, amount, method, note }) {
+  if (!cloudEnabledWithSession()) throw new Error("Ingresá con tu usuario BlackShoes para registrar pagos.");
+  const { data, error } = await supabaseClient.rpc("register_customer_payment", {
+    p_operation_id: cloudOperationId(),
+    p_customer_id: customer?.id && isUuid(customer.id) ? customer.id : null,
+    p_sale_id: sale?.id && isUuid(sale.id) ? sale.id : null,
+    p_amount: amount,
+    p_method: method || "efectivo",
+    p_note: note || "",
+  });
+  if (error) throw new Error(`registrar pago: ${error.message}`);
+  return data;
+}
+
+async function saveCloudExpenseRecord(payload) {
+  if (!cloudEnabledWithSession()) return payload;
+  const row = {
+    operation_id: cloudOperationId(),
+    expense_at: cloudTimestampFromDate(payload.date),
+    category: payload.category || "Otros",
+    amount: Number(payload.amount || 0),
+    payment_method: payload.paymentMethod || "",
+    note: payload.concept || payload.notes || "",
+    created_by: supabaseSession.user.id,
+  };
+  const { data, error } = await supabaseClient.from("expenses").insert(row).select("*").single();
+  if (error) throw new Error(`guardar gasto: ${error.message}`);
+  return normalizeCloudExpense(data);
+}
+
+async function saveCloudStockEntry(entry) {
+  if (!cloudEnabledWithSession()) throw new Error("Ingresá con tu usuario BlackShoes para cargar stock.");
+  const product = state.products.find((item) => item.id === entry.productId);
+  if (!product || !isUuid(product.id)) throw new Error("Producto de Supabase no encontrado.");
+  const variant = entry.size
+    ? normalizeProductSizeVariants(product.sizeVariants).find((item) => item.size === entry.size)
+    : null;
+  if (!variant?.id) throw new Error(`No encontré la variedad ${entry.size || ""} de ${product.description}.`);
+  const quantity = Number(entry.quantity || 0);
+  const unitCost = entry.unitCost !== null && entry.unitCost !== undefined && Number.isFinite(Number(entry.unitCost))
+    ? Number(entry.unitCost)
+    : Number(product.cost || 0);
+  const note = `${entry.note || "Reposicion de Mercaderia"}${entry.size ? ` - Talle ${entry.size}` : ""}`;
+  const { error } = await supabaseClient.rpc("register_stock_movement", {
+    p_operation_id: cloudOperationId(),
+    p_variant_id: variant.id,
+    p_quantity_delta: quantity,
+    p_movement_type: "purchase",
+    p_unit_cost: unitCost,
+    p_note: note,
+  });
+  if (error) throw new Error(`cargar stock: ${error.message}`);
+  if (entry.unitCost !== null && entry.unitCost !== undefined && Number.isFinite(Number(entry.unitCost))) {
+    const nextCost = Number(entry.unitCost);
+    const nextPrice = entry.priceAction === "recalculate"
+      ? Math.round(nextCost + nextCost * (Number(product.margin || 0) / 100))
+      : Number(product.price || 0);
+    const { error: productError } = await supabaseClient
+      .from("products")
+      .update({ cost: nextCost, price: nextPrice, updated_by: supabaseSession.user.id })
+      .eq("id", product.id);
+    if (productError) throw new Error(`actualizar costo/precio: ${productError.message}`);
+  }
+  await saveCloudExpenseRecord({
+    date: entry.date,
+    concept: stockMovementPurchaseNote(quantity, unitCost, note),
+    category: "CompraMercaderia",
+    amount: Math.round(unitCost * quantity),
+  });
+}
+
 function catalogProductUrl(product) {
   return new URL(`catalogo/producto.html?slug=${encodeURIComponent(productCatalogSlug(product))}`, window.location.href.replace(/index\.html$/i, "")).href;
 }
@@ -2523,17 +2858,17 @@ function queueRemoteStateSave() {
 async function syncWithSupabase({ preferRemote = false } = {}) {
   if (REMOTE_SYNC_DISABLED && CLOUD_DATA_ENABLED) {
     if (!cloudEnabledWithSession()) {
-      renderAuthState("Ingresá para leer productos de Supabase.");
+      renderAuthState("Ingresá para leer datos de Supabase.");
       return false;
     }
     try {
-      await loadCloudProductCatalog();
+      await loadCloudData();
       render();
-      renderAuthState("Productos actualizados desde Supabase.");
+      renderAuthState("Datos actualizados desde Supabase.");
       return true;
     } catch (error) {
-      console.warn("Cloud product refresh failed", error);
-      renderAuthState(`No pude actualizar productos: ${error.message || "error de Supabase"}`);
+      console.warn("Cloud data refresh failed", error);
+      renderAuthState(`No pude actualizar datos: ${error.message || "error de Supabase"}`);
       return false;
     }
   }
@@ -2648,7 +2983,7 @@ async function completeSupabaseLogin({ preferRemote = true, openDashboard = fals
     await ensureSupabaseProfile();
     if (REMOTE_SYNC_DISABLED && CLOUD_DATA_ENABLED) {
       remoteHydrationDone = true;
-      await loadCloudProductCatalog();
+      await loadCloudData();
       await refreshSupabaseProfiles({ renderAfter: false });
       render();
       renderAuthState("Supabase conectado.");
@@ -5394,10 +5729,34 @@ function addStockEntryDraftFromForm(form) {
   return true;
 }
 
-function confirmStockEntryBatch() {
+async function confirmStockEntryBatch() {
   if (!stockEntryDraft.length) return;
   const draftCount = stockEntryDraft.length;
   const totalUnits = sum(stockEntryDraft, (entry) => Number(entry.quantity || 0));
+  if (CLOUD_DATA_ENABLED) {
+    try {
+      if (!cloudEnabledWithSession()) {
+        showAuthError("Ingresá con tu usuario BlackShoes para cargar mercadería en Supabase.");
+        renderAuthState("Ingresá para guardar en Supabase.");
+        return;
+      }
+      for (const entry of stockEntryDraft) {
+        await saveCloudStockEntry(entry);
+      }
+      logActivity("stock", "Agrego mercaderia", `${draftCount} productos / ${totalUnits} unidades`);
+      stockEntryDraft = [];
+      await loadCloudData();
+      saveState();
+      closeStockEntryModal();
+      render();
+      showActionToast("Mercadería guardada en Supabase.");
+      return;
+    } catch (error) {
+      console.warn("Cloud stock entry failed", error);
+      alert(`No pude cargar la mercadería en Supabase: ${error.message || "error desconocido"}`);
+      return;
+    }
+  }
   stockEntryDraft.forEach((entry) => {
     const product = state.products.find((item) => item.id === entry.productId);
     if (!product || !product.tracksStock) return;
@@ -5604,7 +5963,7 @@ function removeCartItem(cartId, index) {
   render();
 }
 
-function finalizeCart(cartId) {
+async function finalizeCart(cartId) {
   const cart = state.carts.find((item) => item.id === cartId);
   if (!cart || cart.items.length === 0) return;
   if (!cart.paymentMethod) {
@@ -5639,6 +5998,31 @@ function finalizeCart(cartId) {
     customerId: customer?.id || "",
     customerName: customer?.name || cart.reference || "",
   };
+  if (CLOUD_DATA_ENABLED) {
+    try {
+      if (!cloudEnabledWithSession()) {
+        showAuthError("Ingresá con tu usuario BlackShoes para registrar ventas en Supabase.");
+        renderAuthState("Ingresá para guardar en Supabase.");
+        return;
+      }
+      const cloudCustomer = customer ? await ensureCloudCustomer(customer) : null;
+      cart.customerId = cloudCustomer?.id || "";
+      await saveCloudLocalSale(cart, cloudCustomer);
+      state.salesHistoryPage = 1;
+      state.carts = state.carts.filter((item) => item.id !== cartId);
+      openFreshCartAfterFinalize();
+      logActivity("sale", "Registro venta local", `${money(sale.total)}`);
+      await loadCloudData();
+      saveState();
+      render();
+      showActionToast("Venta registrada en Supabase.");
+      return;
+    } catch (error) {
+      console.warn("Cloud sale save failed", error);
+      alert(`No pude registrar la venta en Supabase: ${error.message || "error desconocido"}`);
+      return;
+    }
+  }
   sale.items.forEach((item) => {
     if (!item.productId || !item.tracksStock) return;
     const product = state.products.find((entry) => entry.id === item.productId);
@@ -7533,7 +7917,7 @@ function closeCustomerEditModal() {
   form?.reset();
 }
 
-function submitCustomerEditModal(form) {
+async function submitCustomerEditModal(form) {
   const data = Object.fromEntries(new FormData(form));
   const customer = state.customers.find((item) => item.id === data.customerId);
   const name = normalizeCustomerName(data.name);
@@ -7544,14 +7928,32 @@ function submitCustomerEditModal(form) {
     alert(`Ese DNI ya está cargado en ${dniOwner.name}.`);
     return;
   }
-  Object.assign(customer, {
+  const payload = {
     name,
     dni,
     phone: data.phone || "",
     initialDebt: Math.max(0, Number(data.initialDebt || 0)),
     province: normalizeProvince(data.province),
     notes: data.notes || "",
-  });
+  };
+  try {
+    if (CLOUD_DATA_ENABLED) {
+      if (!cloudEnabledWithSession()) {
+        showAuthError("Ingresá con tu usuario BlackShoes para guardar clientes en Supabase.");
+        renderAuthState("Ingresá para guardar en Supabase.");
+        return;
+      }
+      const saved = await saveCloudCustomerRecord(customer, payload);
+      Object.assign(customer, saved);
+      await loadCloudOperationalData();
+    } else {
+      Object.assign(customer, payload);
+    }
+  } catch (error) {
+    console.warn("Cloud customer edit failed", error);
+    alert(`No pude guardar el cliente en Supabase: ${error.message || "error desconocido"}`);
+    return;
+  }
   logActivity("customer", "Edito cliente", customer.name);
   closeCustomerEditModal();
   saveState();
@@ -7738,7 +8140,7 @@ function renderCustomerDebtPanel(customer) {
   ].filter(Boolean).join("");
 }
 
-function registerCustomerDebtPayment(form) {
+async function registerCustomerDebtPayment(form) {
   const data = Object.fromEntries(new FormData(form));
   const customer = state.customers.find((item) => item.id === data.customerId);
   const isInitialDebt = data.saleId === "initial";
@@ -7754,6 +8156,37 @@ function registerCustomerDebtPayment(form) {
   if (amount > outstanding) {
     alert(`El pago supera la deuda pendiente de ${money(outstanding)}.`);
     return;
+  }
+  if (CLOUD_DATA_ENABLED) {
+    try {
+      if (!cloudEnabledWithSession()) {
+        showAuthError("Ingresá con tu usuario BlackShoes para registrar pagos en Supabase.");
+        renderAuthState("Ingresá para guardar en Supabase.");
+        return;
+      }
+      const cloudCustomer = await ensureCloudCustomer(customer);
+      await saveCloudCustomerPayment({
+        customer: cloudCustomer,
+        sale: isInitialDebt ? null : sale,
+        amount,
+        method: data.paymentMethod || "efectivo",
+        note: isInitialDebt ? (data.notes || "Pago de deuda inicial") : (data.notes || `Pago ${saleOrder(sale)}`),
+      });
+      await loadCloudOperationalData();
+      form.reset();
+      form.elements.customerId.value = cloudCustomer.id;
+      setDateInput(form.elements.date, todayIso());
+      saveState();
+      renderCustomers();
+      renderCustomerInfoSales();
+      renderDashboard();
+      showActionToast("Pago registrado en Supabase.");
+      return;
+    } catch (error) {
+      console.warn("Cloud customer payment failed", error);
+      alert(`No pude registrar el pago en Supabase: ${error.message || "error desconocido"}`);
+      return;
+    }
   }
   const payment = {
     id: uid("debt-pay"),
@@ -11012,7 +11445,7 @@ document.getElementById("stockEntryForm").addEventListener("submit", (event) => 
   render();
 });
 
-document.getElementById("customerForm").addEventListener("submit", (event) => {
+document.getElementById("customerForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const data = Object.fromEntries(new FormData(event.target));
   const name = normalizeCustomerName(data.name);
@@ -11033,14 +11466,28 @@ document.getElementById("customerForm").addEventListener("submit", (event) => {
     notes: data.notes || "",
   };
   const existing = state.customers.find((customer) => customer.id === editingId);
-  if (existing) {
-    Object.assign(existing, payload);
-    logActivity("customer", "Edito cliente", payload.name);
-  } else {
-    const customer = { id: uid("customer"), ...payload };
-    state.customers.push(customer);
-    logActivity("customer", "Creo cliente", customer.name);
+  try {
+    if (CLOUD_DATA_ENABLED) {
+      if (!cloudEnabledWithSession()) {
+        showAuthError("Ingresá con tu usuario BlackShoes para guardar clientes en Supabase.");
+        renderAuthState("Ingresá para guardar en Supabase.");
+        return;
+      }
+      const saved = await saveCloudCustomerRecord(existing, payload);
+      if (existing) Object.assign(existing, saved);
+      else state.customers.push(saved);
+      await loadCloudOperationalData();
+    } else if (existing) {
+      Object.assign(existing, payload);
+    } else {
+      state.customers.push({ id: uid("customer"), ...payload });
+    }
+  } catch (error) {
+    console.warn("Cloud customer save failed", error);
+    alert(`No pude guardar el cliente en Supabase: ${error.message || "error desconocido"}`);
+    return;
   }
+  logActivity("customer", existing ? "Edito cliente" : "Creo cliente", payload.name);
   clearCustomerForm();
   saveState();
   render();
@@ -11276,7 +11723,7 @@ document.getElementById("onlineForm").addEventListener("submit", (event) => {
   });
 });
 
-document.getElementById("expenseForm").addEventListener("submit", (event) => {
+document.getElementById("expenseForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const data = Object.fromEntries(new FormData(event.target));
   const concept = String(document.getElementById("expenseConcept")?.value || data.expenseConceptEntry || "").trim();
@@ -11290,6 +11737,35 @@ document.getElementById("expenseForm").addEventListener("submit", (event) => {
     return;
   }
   const rule = expenseCategoryRules[data.category] || { type: data.entryType, behavior: data.behavior || "variable" };
+  if (CLOUD_DATA_ENABLED) {
+    try {
+      if (!cloudEnabledWithSession()) {
+        showAuthError("Ingresá con tu usuario BlackShoes para guardar gastos en Supabase.");
+        renderAuthState("Ingresá para guardar en Supabase.");
+        return;
+      }
+      await saveCloudExpenseRecord({
+        date: movementDate,
+        concept,
+        category: rule.type === "purchase" ? "CompraMercaderia" : data.category,
+        amount: Number(data.amount || 0),
+        paymentMethod: data.paymentMethod || "",
+      });
+      await loadCloudOperationalData();
+      logActivity(rule.type === "purchase" ? "expense" : "expense", rule.type === "purchase" ? "Registro mercaderia" : "Registro gasto", `${concept} - ${money(Number(data.amount || 0))}`);
+      event.target.reset();
+      event.target.date.value = todayIso();
+      updateExpenseFormType();
+      saveState();
+      render();
+      showActionToast("Movimiento guardado en Supabase.");
+      return;
+    } catch (error) {
+      console.warn("Cloud expense save failed", error);
+      alert(`No pude guardar el movimiento en Supabase: ${error.message || "error desconocido"}`);
+      return;
+    }
+  }
   if (rule.type === "purchase") {
     state.purchases.push({
       id: uid("purchase"),
