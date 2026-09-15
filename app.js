@@ -4,13 +4,14 @@ const STORE_KEY = "blackshoes-control-v1";
 
 const ACTIVE_STORE_KEY = STORE_KEY;
 const REMOTE_SYNC_DISABLED = true;
+const CLOUD_DATA_ENABLED = true;
 const MODULE_FLAGS = {
   onlineSales: false,
   workshop: false,
   publicCatalog: true,
 };
-const SUPABASE_URL = "";
-const SUPABASE_PUBLISHABLE_KEY = "";
+const SUPABASE_URL = "https://zojdhyuocprglqhddgxv.supabase.co";
+const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_74eFxkDH_3tT_FOzQrrhbw_RP_yTags";
 const SUPABASE_STATE_KEY = "blackshoes-app-state-v1";
 const SUPABASE_BACKUP_KEY_PREFIX = `${SUPABASE_STATE_KEY}-backup-`;
 const SUPABASE_MAX_BACKUPS = 15;
@@ -796,6 +797,8 @@ function normalizeCustomProductCategories(value = []) {
     seen.add(key);
     return {
       id: entry.id || uid("category"),
+      categoryId: entry.categoryId || entry.category_id || "",
+      subcategoryId: entry.subcategoryId || entry.subcategory_id || "",
       category,
       subcategory,
       prefix,
@@ -1087,6 +1090,199 @@ function productCatalogSlug(product) {
   return product?.slug || slugifyCatalogValue(`${product?.code || ""}-${product?.description || ""}-${product?.color || ""}`);
 }
 
+function cloudEnabledWithSession() {
+  return Boolean(CLOUD_DATA_ENABLED && supabaseClient && supabaseSession?.user);
+}
+
+function cloudCategoryEntry(row = {}, subcategory = null) {
+  return {
+    id: subcategory?.id || row.id || uid("category"),
+    categoryId: row.id || "",
+    subcategoryId: subcategory?.id || "",
+    category: normalizeProductDescription(row.name || ""),
+    subcategory: normalizeProductDescription(subcategory?.name || ""),
+    prefix: normalizeCategoryPrefix(row.code || row.prefix || row.name || ""),
+    active: row.active !== false && subcategory?.active !== false,
+    sortOrder: Number(subcategory?.sort_order ?? row.sort_order ?? 0),
+  };
+}
+
+function normalizeCloudProduct(row = {}) {
+  const category = normalizeProductDescription(row.product_categories?.name || row.category || "");
+  const subcategory = normalizeProductDescription(row.product_subcategories?.name || row.subcategory || "");
+  const sizeVariants = normalizeProductSizeVariants((row.product_variants || [])
+    .filter((variant) => variant.active !== false && !variant.archived_at)
+    .map((variant) => ({
+      id: variant.id,
+      size: variant.size,
+      stock: variant.current_stock,
+    })));
+  const imageUrls = (row.product_images || [])
+    .sort((a, b) => Number(b.is_primary) - Number(a.is_primary) || Number(a.sort_order || 0) - Number(b.sort_order || 0))
+    .map((image) => image.public_url || image.storage_path)
+    .filter(Boolean);
+  return {
+    id: row.id,
+    code: row.sku || "",
+    barcode: barcodeFromCode(row.sku || ""),
+    slug: row.slug || "",
+    description: normalizeProductDescription(row.name || ""),
+    catalogDescription: String(row.description || "").trim(),
+    color: normalizeProductDescription(row.color || ""),
+    category: canonicalProductCategory(category),
+    subcategory,
+    unit: "Unidad",
+    cost: Number(row.cost || 0),
+    margin: Number(row.margin_percent || 0),
+    price: Number(row.price || 0),
+    promoPrice: Number(row.promo_price || 0),
+    wholesalePrice: Number(row.wholesale_price || 0),
+    tracksStock: row.tracks_stock !== false,
+    stock: row.tracks_stock === false ? null : sum(sizeVariants, (variant) => Number(variant.stock || 0)),
+    published: Boolean(row.published),
+    featured: false,
+    isNew: false,
+    imageUrls,
+    images: imageUrls,
+    sizeVariants,
+    createdAt: row.created_at || new Date().toISOString(),
+    updatedAt: row.updated_at || row.created_at || new Date().toISOString(),
+  };
+}
+
+async function loadCloudProductCatalog() {
+  if (!cloudEnabledWithSession()) return false;
+  const [{ data: categories, error: categoryError }, { data: subcategories, error: subcategoryError }, { data: products, error: productError }] = await Promise.all([
+    supabaseClient.from("product_categories").select("id,name,slug,code,active,sort_order").is("archived_at", null).order("sort_order", { ascending: true }).order("name", { ascending: true }),
+    supabaseClient.from("product_subcategories").select("id,category_id,name,slug,active,sort_order").is("archived_at", null).order("sort_order", { ascending: true }).order("name", { ascending: true }),
+    supabaseClient
+      .from("products")
+      .select("*,product_categories(id,name,slug,code),product_subcategories(id,name,slug),product_variants(id,size,current_stock,active,sort_order,archived_at),product_images(id,storage_path,public_url,alt_text,is_primary,sort_order,archived_at)")
+      .is("archived_at", null)
+      .order("created_at", { ascending: false }),
+  ]);
+  if (categoryError) throw new Error(`categorias: ${categoryError.message}`);
+  if (subcategoryError) throw new Error(`subcategorias: ${subcategoryError.message}`);
+  if (productError) throw new Error(`productos: ${productError.message}`);
+  const categoriesById = new Map((categories || []).map((category) => [category.id, category]));
+  const categoryRows = [];
+  (categories || []).forEach((category) => categoryRows.push(cloudCategoryEntry(category)));
+  (subcategories || []).forEach((subcategory) => {
+    const category = categoriesById.get(subcategory.category_id);
+    if (category) categoryRows.push(cloudCategoryEntry(category, subcategory));
+  });
+  state.customProductCategories = normalizeCustomProductCategories(categoryRows);
+  state.products = (products || []).map(normalizeCloudProduct);
+  persistStateLocalOnly();
+  return true;
+}
+
+function cloudProductCategoryRow(categoryName) {
+  const category = canonicalProductCategory(categoryName);
+  return normalizeCustomProductCategories(state.customProductCategories)
+    .find((entry) => canonicalProductCategory(entry.category) === category && !entry.subcategory);
+}
+
+function cloudProductSubcategoryRow(categoryName, subcategoryName) {
+  const category = canonicalProductCategory(categoryName);
+  const subcategory = normalizeProductDescription(subcategoryName || "");
+  if (!subcategory) return null;
+  return normalizeCustomProductCategories(state.customProductCategories)
+    .find((entry) => canonicalProductCategory(entry.category) === category && categoryKey(entry.subcategory) === categoryKey(subcategory));
+}
+
+async function syncCloudProductVariants(productId, variants = []) {
+  const { data: existing, error: readError } = await supabaseClient
+    .from("product_variants")
+    .select("id,size")
+    .eq("product_id", productId);
+  if (readError) throw new Error(`leer variantes: ${readError.message}`);
+  const existingBySize = new Map((existing || []).map((variant) => [categoryKey(variant.size), variant]));
+  const activeKeys = new Set();
+  for (const [index, variant] of normalizeProductSizeVariants(variants).entries()) {
+    const key = categoryKey(variant.size);
+    activeKeys.add(key);
+    const payload = {
+      product_id: productId,
+      size: variant.size,
+      current_stock: Number(variant.stock || 0),
+      active: true,
+      sort_order: index + 1,
+      archived_at: null,
+      updated_by: supabaseSession.user.id,
+    };
+    const existingVariant = existingBySize.get(key);
+    const query = existingVariant
+      ? supabaseClient.from("product_variants").update(payload).eq("id", existingVariant.id)
+      : supabaseClient.from("product_variants").insert({ ...payload, created_by: supabaseSession.user.id });
+    const { error } = await query;
+    if (error) throw new Error(`guardar variante ${variant.size}: ${error.message}`);
+  }
+  const removed = (existing || []).filter((variant) => !activeKeys.has(categoryKey(variant.size))).map((variant) => variant.id);
+  if (removed.length) {
+    const { error } = await supabaseClient
+      .from("product_variants")
+      .update({ active: false, archived_at: new Date().toISOString(), updated_by: supabaseSession.user.id })
+      .in("id", removed);
+    if (error) throw new Error(`archivar variantes: ${error.message}`);
+  }
+}
+
+async function syncCloudProductImages(productId, urls = [], productName = "") {
+  const { error: archiveError } = await supabaseClient
+    .from("product_images")
+    .update({ archived_at: new Date().toISOString() })
+    .eq("product_id", productId)
+    .is("archived_at", null);
+  if (archiveError) throw new Error(`archivar imagenes: ${archiveError.message}`);
+  const rows = normalizeProductImageUrls(urls)
+    .filter((url) => !String(url).startsWith("data:image/"))
+    .map((url, index) => ({
+      product_id: productId,
+      storage_path: url,
+      public_url: url,
+      alt_text: productName,
+      is_primary: index === 0,
+      sort_order: index + 1,
+      created_by: supabaseSession.user.id,
+    }));
+  if (!rows.length) return;
+  const { error } = await supabaseClient.from("product_images").insert(rows);
+  if (error) throw new Error(`guardar imagenes: ${error.message}`);
+}
+
+async function saveCloudProductRecord(existing, product) {
+  if (!cloudEnabledWithSession()) return product;
+  const categoryRow = cloudProductCategoryRow(product.category);
+  const subcategoryRow = cloudProductSubcategoryRow(product.category, product.subcategory);
+  if (!categoryRow?.categoryId) throw new Error(`No encontre la categoria ${product.category} en Supabase.`);
+  const payload = {
+    sku: product.code,
+    slug: productCatalogSlug(product),
+    name: product.description,
+    color: product.color || "",
+    category_id: categoryRow.categoryId,
+    subcategory_id: subcategoryRow?.subcategoryId || null,
+    description: product.catalogDescription || "",
+    cost: Number(product.cost || 0) || null,
+    margin_percent: Number(product.margin || 0),
+    price: Number(product.price || 0),
+    promo_price: Number(product.promoPrice || 0),
+    wholesale_price: Number(product.wholesalePrice || 0),
+    tracks_stock: Boolean(product.tracksStock),
+    published: Boolean(product.published),
+    updated_by: supabaseSession.user.id,
+  };
+  const query = existing?.id
+    ? supabaseClient.from("products").update(payload).eq("id", existing.id).select("*").single()
+    : supabaseClient.from("products").insert({ ...payload, created_by: supabaseSession.user.id }).select("*").single();
+  const { data, error } = await query;
+  if (error) throw new Error(`guardar producto: ${error.message}`);
+  await syncCloudProductVariants(data.id, product.tracksStock ? product.sizeVariants : []);
+  await syncCloudProductImages(data.id, product.imageUrls, product.description);
+  return { ...product, id: data.id, slug: data.slug, createdAt: data.created_at, updatedAt: data.updated_at };
+}
+
 function catalogProductUrl(product) {
   return new URL(`catalogo/producto.html?slug=${encodeURIComponent(productCatalogSlug(product))}`, window.location.href.replace(/index\.html$/i, "")).href;
 }
@@ -1350,7 +1546,7 @@ function saveState() {
   localChangeRevision += 1;
   markDirtyRemoteChanges(lastDirtyComparisonState, state);
   lastDirtyComparisonState = cloneStateForDirtyComparison(state);
-  const shouldQueueRemoteSave = hasPendingRemoteChanges(state.pendingRemoteChanges) || state.systemMigrationPending;
+  const shouldQueueRemoteSave = !REMOTE_SYNC_DISABLED && (hasPendingRemoteChanges(state.pendingRemoteChanges) || state.systemMigrationPending);
   businessStateDirty = shouldQueueRemoteSave;
   state.localSyncPending = shouldQueueRemoteSave;
   localStorage.setItem(ACTIVE_STORE_KEY, JSON.stringify(state));
@@ -1382,7 +1578,7 @@ function cachedSupabaseProfile() {
 }
 
 function initSupabaseClient() {
-  if (REMOTE_SYNC_DISABLED || !SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) return null;
+  if ((!CLOUD_DATA_ENABLED && REMOTE_SYNC_DISABLED) || !SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) return null;
   if (supabaseClient || !window.supabase?.createClient) return supabaseClient;
   supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
   return supabaseClient;
@@ -1396,12 +1592,12 @@ function renderAuthState(message = "") {
   const mobileLogoutButton = document.getElementById("mobileLogoutButton");
   const remoteLabel = document.getElementById("remoteSyncLabel");
   if (authModal) {
-    const authRequired = !REMOTE_SYNC_DISABLED && !supabaseSession;
+    const authRequired = (CLOUD_DATA_ENABLED || !REMOTE_SYNC_DISABLED) && !supabaseSession;
     authModal.classList.toggle("open", authRequired);
     authModal.setAttribute("aria-hidden", authRequired ? "false" : "true");
   }
-  if (logoutButton) logoutButton.hidden = REMOTE_SYNC_DISABLED || !supabaseSession;
-  if (mobileLogoutButton) mobileLogoutButton.hidden = REMOTE_SYNC_DISABLED || !supabaseSession;
+  if (logoutButton) logoutButton.hidden = !(CLOUD_DATA_ENABLED || !REMOTE_SYNC_DISABLED) || !supabaseSession;
+  if (mobileLogoutButton) mobileLogoutButton.hidden = !(CLOUD_DATA_ENABLED || !REMOTE_SYNC_DISABLED) || !supabaseSession;
   if (authMessage && message) authMessage.textContent = message;
   if (authError && supabaseSession) {
     authError.classList.add("is-hidden");
@@ -1409,7 +1605,9 @@ function renderAuthState(message = "") {
   }
   if (remoteLabel) {
     remoteLabel.hidden = false;
-    remoteLabel.textContent = REMOTE_SYNC_DISABLED
+    remoteLabel.textContent = CLOUD_DATA_ENABLED
+      ? (!supabaseSession ? "Sesion cerrada" : (message || "Supabase conectado"))
+      : REMOTE_SYNC_DISABLED
       ? "Supabase desactivado"
       : !supabaseSession
       ? "Sesion cerrada"
@@ -2055,6 +2253,11 @@ function primaryPublishSummary(value = {}) {
 }
 
 async function publishLocalStateAsPrimary() {
+  if (REMOTE_SYNC_DISABLED && CLOUD_DATA_ENABLED) {
+    showActionToast("La base nueva usa tablas separadas. No se sube estado completo.");
+    renderAuthState("Modo Supabase granular activo.");
+    return;
+  }
   if (!isAdminProfile()) {
     showActionToast("Solo admin puede subir la base principal.");
     return;
@@ -2266,6 +2469,7 @@ async function saveRemoteStateNow() {
 }
 
 function queueRemoteStateSave() {
+  if (REMOTE_SYNC_DISABLED) return;
   if (!supabaseClient || !supabaseSession || !remoteHydrationDone) return;
   if (!navigator.onLine) {
     markLocalSyncPending();
@@ -2278,6 +2482,22 @@ function queueRemoteStateSave() {
 }
 
 async function syncWithSupabase({ preferRemote = false } = {}) {
+  if (REMOTE_SYNC_DISABLED && CLOUD_DATA_ENABLED) {
+    if (!cloudEnabledWithSession()) {
+      renderAuthState("Ingresá para leer productos de Supabase.");
+      return false;
+    }
+    try {
+      await loadCloudProductCatalog();
+      render();
+      renderAuthState("Productos actualizados desde Supabase.");
+      return true;
+    } catch (error) {
+      console.warn("Cloud product refresh failed", error);
+      renderAuthState(`No pude actualizar productos: ${error.message || "error de Supabase"}`);
+      return false;
+    }
+  }
   if (!supabaseClient || !supabaseSession) {
     renderAuthState("Ingresá para sincronizar con Supabase.");
     return false;
@@ -2323,7 +2543,8 @@ async function syncWithSupabase({ preferRemote = false } = {}) {
 
 function canAutoDownloadRemoteState() {
   return Boolean(
-    supabaseClient
+    !REMOTE_SYNC_DISABLED
+    && supabaseClient
     && supabaseSession
     && remoteHydrationDone
     && navigator.onLine
@@ -2386,6 +2607,17 @@ async function handleAuthSubmit(event, mode = "signin") {
 async function completeSupabaseLogin({ preferRemote = true, openDashboard = false } = {}) {
   try {
     await ensureSupabaseProfile();
+    if (REMOTE_SYNC_DISABLED && CLOUD_DATA_ENABLED) {
+      remoteHydrationDone = true;
+      await loadCloudProductCatalog();
+      await refreshSupabaseProfiles({ renderAfter: false });
+      render();
+      renderAuthState("Supabase conectado.");
+      applyNavigationPermissions();
+      if (openDashboard) setView(canViewTab("dashboard") ? "dashboard" : firstAllowedView());
+      else if (!canViewTab(state.activeView)) setView(firstAllowedView());
+      return;
+    }
     remoteHydrationDone = true;
     const hadLocalOperationalData = hasLocalRepairData(state);
     const synced = await syncWithSupabase({ preferRemote });
@@ -2449,7 +2681,7 @@ async function completeSupabaseLogin({ preferRemote = true, openDashboard = fals
 }
 
 async function initializeSupabaseAuth() {
-  if (REMOTE_SYNC_DISABLED) {
+  if (REMOTE_SYNC_DISABLED && !CLOUD_DATA_ENABLED) {
     remoteHydrationDone = true;
     renderAuthState("Supabase desactivado");
     applyNavigationPermissions();
@@ -4724,7 +4956,21 @@ function closePriceUpdateModal() {
   modal.setAttribute("aria-hidden", "true");
 }
 
-function commitProductFormSave({ existing, updatedProduct, stockDraft = null, updateStockCost = false, updateStockPrice = false, now = new Date().toISOString() }) {
+async function commitProductFormSave({ existing, updatedProduct, stockDraft = null, updateStockCost = false, updateStockPrice = false, now = new Date().toISOString() }) {
+  try {
+    if (CLOUD_DATA_ENABLED) {
+      if (!cloudEnabledWithSession()) {
+        showAuthError("Ingresá con tu usuario BlackShoes para guardar productos en Supabase.");
+        renderAuthState("Ingresá para guardar en Supabase.");
+        return;
+      }
+      updatedProduct = await saveCloudProductRecord(existing, updatedProduct);
+    }
+  } catch (error) {
+    console.warn("Cloud product save failed", error);
+    alert(`No pude guardar el producto en Supabase: ${error.message || "error desconocido"}`);
+    return;
+  }
   if (existing) {
     const wasTracked = Boolean(existing.tracksStock);
     const previousStock = Number(existing.stock || 0);
@@ -4751,7 +4997,7 @@ function commitProductFormSave({ existing, updatedProduct, stockDraft = null, up
     }
     logActivity("product", "Edito producto", `${existing.code} - ${existing.description}`);
   } else {
-    const product = { id: uid("product"), ...updatedProduct, createdAt: now, updatedAt: now };
+    const product = { id: updatedProduct.id || uid("product"), ...updatedProduct, createdAt: updatedProduct.createdAt || now, updatedAt: updatedProduct.updatedAt || now };
     state.products.push(product);
     if (product.tracksStock) {
       addStockHistory(product, "ajuste", product.stock, product.stock, "Stock Inicial");
@@ -4811,15 +5057,15 @@ function closeStockCostUpdateModal() {
   modal.setAttribute("aria-hidden", "true");
 }
 
-function saveProductKeepingOldCost() {
+async function saveProductKeepingOldCost() {
   if (!pendingProductStockCostSave) return;
   const payload = pendingProductStockCostSave;
   pendingProductStockCostSave = null;
-  commitProductFormSave(payload);
+  await commitProductFormSave(payload);
   closeStockCostUpdateModal();
 }
 
-function saveProductUpdatingCost() {
+async function saveProductUpdatingCost() {
   if (!pendingProductStockCostSave) return;
   const panel = document.getElementById("stockCostPricePanel");
   const acceptButton = document.getElementById("stockCostAcceptCost");
@@ -4835,7 +5081,7 @@ function saveProductUpdatingCost() {
     payload.updatedProduct.price = Number(document.getElementById("stockCostRecalculatedPrice")?.value || payload.updatedProduct.price || 0);
   }
   pendingProductStockCostSave = null;
-  commitProductFormSave({ ...payload, updateStockCost: true, updateStockPrice: updatePrice });
+  await commitProductFormSave({ ...payload, updateStockCost: true, updateStockPrice: updatePrice });
   closeStockCostUpdateModal();
 }
 

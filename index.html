@@ -754,16 +754,16 @@
             <div class="backup-settings-row">
               <div>
                 <strong>Respaldos automaticos</strong>
-                <small>Antes de cada guardado grande se guarda una copia. Se conservan los ultimos 15.</small>
+                <small>Modo anterior deshabilitado. La base nueva usa tablas separadas, auditoria y movimientos.</small>
               </div>
-              <button class="secondary" id="openRemoteBackupsButton" type="button">Ver Respaldos</button>
+              <button class="secondary" id="openRemoteBackupsButton" type="button" disabled>Ver Respaldos</button>
             </div>
             <div class="backup-settings-row">
               <div>
-                <strong>Base principal de Supabase</strong>
-                <small>Supabase esta desactivado por seguridad. Se activara cuando creemos la base nueva de BlackShoes.</small>
+                <strong>Supabase granular</strong>
+                <small>Activo para productos, categorias y variantes. Ventas, pagos, stock y gastos se conectan en las siguientes etapas.</small>
               </div>
-              <button class="danger" id="publishLocalPrimaryButton" type="button">Subir esta PC como base</button>
+              <button class="danger" id="publishLocalPrimaryButton" type="button" disabled>Subir esta PC como base</button>
             </div>
           </section>
           <section class="panel">
@@ -1521,10 +1521,10 @@
     <div class="action-toast" id="actionToast" role="status" aria-live="polite"></div>
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="app.js?v=238"></script>
+    <script src="app.js?v=239"></script>
     <script>
       if ("serviceWorker" in navigator && location.protocol !== "file:") {
-        navigator.serviceWorker.register("sw.js?v=249");
+        navigator.serviceWorker.register("sw.js?v=250");
       }
     </script>
   </body>
