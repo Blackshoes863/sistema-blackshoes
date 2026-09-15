@@ -7383,7 +7383,7 @@ function openCatalogProduct(productId) {
 }
 
 function openPublicCatalog() {
-  window.open(new URL("catalogo/index.html", window.location.href.replace(/index\.html$/i, "")).href, "_blank", "noopener");
+  window.open(new URL("catalogo", window.location.href.replace(/index\.html$/i, "")).href, "_blank", "noopener");
 }
 
 function salesForCustomer(customer) {

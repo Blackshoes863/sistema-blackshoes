@@ -21,6 +21,18 @@
       ]
     }
   ],
+  "redirects": [
+    {
+      "source": "/catalogo/index.html",
+      "destination": "/catalogo",
+      "permanent": false
+    },
+    {
+      "source": "/catalogo/index",
+      "destination": "/catalogo",
+      "permanent": false
+    }
+  ],
   "rewrites": [
     {
       "source": "/admin",
