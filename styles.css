@@ -52,6 +52,10 @@ button {
   min-height: 100vh;
 }
 
+body.auth-locked .app-shell {
+  display: none;
+}
+
 .app-header {
   position: sticky;
   top: 0;
@@ -2006,6 +2010,10 @@ datalist {
 .auth-backdrop {
   z-index: 80;
   background: #fff;
+}
+
+body.auth-locked .auth-backdrop {
+  display: flex;
 }
 
 .auth-modal {

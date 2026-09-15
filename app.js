@@ -1591,8 +1591,9 @@ function renderAuthState(message = "") {
   const logoutButton = document.getElementById("logoutButton");
   const mobileLogoutButton = document.getElementById("mobileLogoutButton");
   const remoteLabel = document.getElementById("remoteSyncLabel");
+  const authRequired = (CLOUD_DATA_ENABLED || !REMOTE_SYNC_DISABLED) && !supabaseSession;
+  document.body.classList.toggle("auth-locked", authRequired);
   if (authModal) {
-    const authRequired = (CLOUD_DATA_ENABLED || !REMOTE_SYNC_DISABLED) && !supabaseSession;
     authModal.classList.toggle("open", authRequired);
     authModal.setAttribute("aria-hidden", authRequired ? "false" : "true");
   }

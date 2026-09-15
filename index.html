@@ -9,9 +9,9 @@
     <link rel="manifest" href="manifest.json?v=5">
     <link rel="icon" type="image/png" sizes="32x32" href="assets/blackshoes-favicon-32.png">
     <link rel="apple-touch-icon" href="assets/blackshoes-apple-touch.png">
-    <link rel="stylesheet" href="styles.css?v=91">
+    <link rel="stylesheet" href="styles.css?v=92">
   </head>
-  <body>
+  <body class="auth-locked">
     <div class="app-shell">
       <header class="app-header">
         <div class="header-main">
@@ -1521,10 +1521,10 @@
     <div class="action-toast" id="actionToast" role="status" aria-live="polite"></div>
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="app.js?v=239"></script>
+    <script src="app.js?v=240"></script>
     <script>
       if ("serviceWorker" in navigator && location.protocol !== "file:") {
-        navigator.serviceWorker.register("sw.js?v=250");
+        navigator.serviceWorker.register("sw.js?v=251");
       }
     </script>
   </body>

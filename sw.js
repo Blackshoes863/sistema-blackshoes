@@ -1,4 +1,4 @@
-const CACHE_NAME = "blackshoes-control-v50";
+const CACHE_NAME = "blackshoes-control-v51";
 const ASSETS = [
   "./",
   "./index.html",
@@ -8,8 +8,8 @@ const ASSETS = [
   "./catalogo/config.js",
   "./catalogo/catalogo.css?v=5",
   "./catalogo/catalogo.js?v=9",
-  "./styles.css?v=91",
-  "./app.js?v=239",
+  "./styles.css?v=92",
+  "./app.js?v=240",
   "./manifest.json?v=5",
   "./assets/blackshoes-header-logo.png",
   "./assets/blackshoes-logo.png",
@@ -35,6 +35,20 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
+  const url = new URL(event.request.url);
+  const isFreshAsset = event.request.mode === "navigate" || [".html", ".js", ".css"].some((suffix) => url.pathname.endsWith(suffix));
+  if (isFreshAsset) {
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+          return response;
+        })
+        .catch(() => caches.match(event.request))
+    );
+    return;
+  }
   event.respondWith(
     caches.match(event.request).then((cached) => cached || fetch(event.request))
   );
