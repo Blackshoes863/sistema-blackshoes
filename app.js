@@ -1002,6 +1002,23 @@ function serializeProductImageUrls(product) {
   return normalizeProductImageUrls(product?.imageUrls).join("\n");
 }
 
+function isDataImageUrl(value) {
+  return /^data:image\/[^;]+;base64,/i.test(String(value || ""));
+}
+
+function imageExtensionFromDataUrl(dataUrl) {
+  const type = String(dataUrl || "").match(/^data:image\/([^;]+);/i)?.[1]?.toLowerCase() || "webp";
+  if (type === "jpeg" || type === "jpg") return "jpg";
+  if (type === "svg+xml") return "svg";
+  return ["webp", "png", "gif", "avif"].includes(type) ? type : "webp";
+}
+
+async function dataImageUrlToBlob(dataUrl) {
+  const response = await fetch(dataUrl);
+  if (!response.ok) throw new Error("No pude preparar la imagen para subir.");
+  return response.blob();
+}
+
 function readFileAsDataUrl(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -1235,20 +1252,41 @@ async function syncCloudProductImages(productId, urls = [], productName = "") {
     .eq("product_id", productId)
     .is("archived_at", null);
   if (archiveError) throw new Error(`archivar imagenes: ${archiveError.message}`);
-  const rows = normalizeProductImageUrls(urls)
-    .filter((url) => !String(url).startsWith("data:image/"))
-    .map((url, index) => ({
+
+  const bucket = supabaseClient.storage.from("product-images");
+  const savedImages = [];
+  for (const [index, url] of normalizeProductImageUrls(urls).entries()) {
+    let storagePath = url;
+    let publicUrl = url;
+    if (isDataImageUrl(url)) {
+      const extension = imageExtensionFromDataUrl(url);
+      const path = `products/${productId}/${Date.now()}-${index + 1}-${Math.floor(Math.random() * 100000)}.${extension}`;
+      const blob = await dataImageUrlToBlob(url);
+      const { error: uploadError } = await bucket.upload(path, blob, {
+        contentType: blob.type || `image/${extension}`,
+        cacheControl: "31536000",
+        upsert: false,
+      });
+      if (uploadError) throw new Error(`subir imagen: ${uploadError.message}`);
+      storagePath = path;
+      publicUrl = bucket.getPublicUrl(path).data?.publicUrl || path;
+    }
+    savedImages.push({ storagePath, publicUrl });
+  }
+
+  const rows = savedImages.map((image, index) => ({
       product_id: productId,
-      storage_path: url,
-      public_url: url,
+      storage_path: image.storagePath,
+      public_url: image.publicUrl,
       alt_text: productName,
       is_primary: index === 0,
       sort_order: index + 1,
       created_by: supabaseSession.user.id,
     }));
-  if (!rows.length) return;
+  if (!rows.length) return [];
   const { error } = await supabaseClient.from("product_images").insert(rows);
   if (error) throw new Error(`guardar imagenes: ${error.message}`);
+  return savedImages.map((image) => image.publicUrl);
 }
 
 async function saveCloudProductRecord(existing, product) {
@@ -1279,8 +1317,8 @@ async function saveCloudProductRecord(existing, product) {
   const { data, error } = await query;
   if (error) throw new Error(`guardar producto: ${error.message}`);
   await syncCloudProductVariants(data.id, product.tracksStock ? product.sizeVariants : []);
-  await syncCloudProductImages(data.id, product.imageUrls, product.description);
-  return { ...product, id: data.id, slug: data.slug, createdAt: data.created_at, updatedAt: data.updated_at };
+  const imageUrls = await syncCloudProductImages(data.id, product.imageUrls, product.description);
+  return { ...product, id: data.id, slug: data.slug, imageUrls, images: imageUrls, createdAt: data.created_at, updatedAt: data.updated_at };
 }
 
 function catalogProductUrl(product) {
