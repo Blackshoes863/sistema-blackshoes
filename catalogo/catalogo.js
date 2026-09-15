@@ -25,8 +25,7 @@ const currency = new Intl.NumberFormat("es-AR", {
 let catalogProducts = [];
 
 function catalogRootPath() {
-  const path = window.location.pathname;
-  return /\/catalogo\/(novedades|destacados)\/?$/i.test(path) ? "../" : "./";
+  return "/catalogo/";
 }
 
 function catalogSection() {
@@ -380,7 +379,7 @@ function renderProductDetail(selectedSize = "") {
         <h2>Productos relacionados</h2>
         <div class="catalog-grid compact">
           ${related.map((item) => `
-            <a class="mini-card" href="./producto.html?slug=${encodeURIComponent(productSlug(item))}">
+            <a class="mini-card" href="/catalogo/producto.html?slug=${encodeURIComponent(productSlug(item))}">
               ${productImage(item, "mini-image")}
               <strong>${escapeHtml(item.name)}</strong>
               <span>${currency.format(effectivePrice(item))}</span>
@@ -439,7 +438,7 @@ document.addEventListener("click", (event) => {
 });
 document.addEventListener("change", (event) => {
   if (event.target.id === "productColorSelect") {
-    window.location.href = `./producto.html?slug=${encodeURIComponent(event.target.value)}`;
+    window.location.href = `/catalogo/producto.html?slug=${encodeURIComponent(event.target.value)}`;
   }
 });
 window.addEventListener("storage", (event) => {
