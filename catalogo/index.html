@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Catalogo BlackShoes</title>
+    <meta name="description" content="Catalogo publico de BlackShoes conectado a los productos reales del sistema.">
+    <meta name="theme-color" content="#111111">
+    <link rel="manifest" href="../manifest.json?v=5">
+    <link rel="icon" type="image/png" sizes="32x32" href="../assets/blackshoes-favicon-32.png">
+    <link rel="apple-touch-icon" href="../assets/blackshoes-apple-touch.png">
+    <link rel="stylesheet" href="./catalogo.css?v=5">
+  </head>
+  <body>
+    <header class="catalog-header">
+      <a class="brand" href="./">
+        <span class="brand-mark" aria-hidden="true"><img src="../assets/blackshoes-header-logo.png" alt=""></span>
+        <strong>BlackShoes</strong>
+      </a>
+      <span class="status-pill" id="catalogStatus">Catalogo en preparacion</span>
+    </header>
+
+    <main class="catalog-shell">
+      <section class="catalog-intro">
+        <p>Catalogo publico</p>
+        <h1>Conoce nuestros productos</h1>
+      </section>
+
+      <section class="catalog-toolbar" aria-label="Filtros del catalogo">
+        <input id="catalogSearch" type="search" placeholder="Buscar producto">
+        <select id="catalogCategory" aria-label="Categoria">
+          <option value="all">Categorias</option>
+        </select>
+        <select id="catalogSubcategory" aria-label="Subcategoria">
+          <option value="all">Subcategorias</option>
+        </select>
+        <select id="catalogColor" aria-label="Color">
+          <option value="all">Colores</option>
+        </select>
+        <select id="catalogSize" aria-label="Talle">
+          <option value="all">Talles</option>
+        </select>
+        <div class="price-filter">
+          <input id="catalogMinPrice" type="number" min="0" step="1" placeholder="Precio min.">
+          <input id="catalogMaxPrice" type="number" min="0" step="1" placeholder="Precio max.">
+        </div>
+        <select id="catalogSort" aria-label="Ordenar productos">
+          <option value="new">Mas nuevos</option>
+          <option value="priceAsc">Menor precio</option>
+          <option value="priceDesc">Mayor precio</option>
+        </select>
+      </section>
+
+      <section class="catalog-grid" id="catalogGrid"></section>
+      <section class="catalog-empty" id="catalogEmpty" hidden>
+        <h2>Catalogo todavia no disponible</h2>
+        <p>Cuando creemos Supabase nuevo para BlackShoes, esta pagina va a mostrar los mismos productos, precios, stock y variantes que cargues en el sistema interno.</p>
+      </section>
+    </main>
+
+    <script src="./config.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="./catalogo.js?v=8"></script>
+  </body>
+</html>

@@ -1,0 +1,1531 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>BlackShoes</title>
+    <meta name="description" content="Sistema de gestion local para BlackShoes.">
+    <meta name="theme-color" content="#111111">
+    <link rel="manifest" href="manifest.json?v=5">
+    <link rel="icon" type="image/png" sizes="32x32" href="assets/blackshoes-favicon-32.png">
+    <link rel="apple-touch-icon" href="assets/blackshoes-apple-touch.png">
+    <link rel="stylesheet" href="styles.css?v=91">
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="app-header">
+        <div class="header-main">
+          <div class="brand">
+            <span class="brand-mark" aria-hidden="true"><img src="assets/blackshoes-header-logo.png" alt=""></span>
+            <strong>BlackShoes</strong>
+          </div>
+          <div class="sync-panel">
+            <div>
+              <span class="label">Conexión</span>
+              <strong id="connectionLabel">Online</strong>
+            </div>
+            <label class="switch">
+              <input id="offlineToggle" type="checkbox">
+              <span></span>
+            </label>
+            <button class="secondary" id="syncButton">Sincronizar</button>
+            <button class="danger" id="logoutButton" type="button" hidden>Salir</button>
+            <small id="pendingLabel">0 Pendientes</small>
+            <small id="remoteSyncLabel">Supabase: desconectado</small>
+          </div>
+        </div>
+        <nav class="nav-list" aria-label="Navegación principal">
+          <button class="nav-item active" data-view="dashboard">Resumen</button>
+          <button class="nav-item" data-view="catalog">Productos</button>
+          <button class="nav-item" data-view="customers">Clientes</button>
+          <button class="nav-item" data-view="pos">Ventas Local</button>
+          <button class="nav-item" data-view="online" data-module="onlineSales" hidden>Ventas Online</button>
+          <button class="nav-item" data-view="salesHistory">Historial de Ventas</button>
+          <button class="nav-item" data-view="expenses">Gastos y Mercadería</button>
+          <button class="nav-item" data-view="reports">Estadísticas</button>
+        </nav>
+      </header>
+      <main class="main">
+        <header class="topbar">
+          <div>
+            <h1 id="viewTitle">Resumen</h1>
+          </div>
+          <div class="summary-list online-month-summary topbar-summary" id="localSummary" hidden></div>
+          <div class="summary-list online-month-summary topbar-summary" id="onlineSummary" hidden></div>
+        </header>
+
+        <section class="view active" id="dashboard">
+          <div class="metric-grid dashboard-metrics">
+            <article class="metric">
+              <span>Ventas de hoy</span>
+              <strong id="todayRevenue">$0</strong>
+              <small>Ventas del dia</small>
+            </article>
+            <article class="metric" data-module="onlineSales" hidden>
+              <span>Hoy Web</span>
+              <strong id="todayOnlineRevenue">$0</strong>
+              <small>Vendido online</small>
+            </article>
+            <article class="metric">
+              <span>Ventas del mes</span>
+              <strong id="monthRevenue">$0</strong>
+              <small>Acumulado mensual</small>
+            </article>
+            <article class="metric">
+              <span>Deudas por cobrar</span>
+              <strong id="receivablesTotal">$0</strong>
+              <small>Saldo pendiente de clientes</small>
+            </article>
+            <article class="metric">
+              <span>Resultado del mes</span>
+              <strong id="monthResult">$0</strong>
+              <small>Ventas - Gastos - Costo de Mercadería</small>
+            </article>
+          </div>
+
+          <section class="panel payment-summary-panel">
+            <div class="panel-head">
+              <h2>Ventas Local por Medio de Pago Hoy</h2>
+              <span id="todayPaymentTotal">$0</span>
+            </div>
+            <div class="payment-summary-list" id="todayPaymentSummary"></div>
+          </section>
+
+          <div class="content-grid full">
+            <section class="panel monthly-chart-panel">
+              <div class="panel-head">
+                <h2>Registro Económico Mensual</h2>
+                <div class="product-actions month-picker">
+                  <select id="monthPickerMonth" class="month-select compact-select" aria-label="Seleccionar mes"></select>
+                  <select id="monthPickerYear" class="month-select compact-select" aria-label="Seleccionar año"></select>
+                  <button class="secondary" id="closeSelectedMonthButton" type="button">Cerrar Mes</button>
+                </div>
+              </div>
+              <div class="chart-legend" aria-label="Referencias del gráfico">
+                <span><i class="dot dot-local"></i>Ventas</span>
+                <span data-module="onlineSales" hidden><i class="dot dot-insumos"></i>Canal 1</span>
+                <span data-module="onlineSales" hidden><i class="dot dot-accesorios"></i>Canal 2</span>
+              </div>
+              <div class="chart" id="monthlyChart" aria-label="Gráfico mensual"></div>
+            </section>
+            <section class="panel monthly-closures-panel">
+              <div class="panel-head">
+                <h2>Cierres Mensuales</h2>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr><th>Mes</th><th>Ingresos</th><th>Gastos</th><th>Mercadería</th><th>Resultado</th><th>Ventas</th><th class="row-actions-head" aria-label="Acciones"></th></tr>
+                  </thead>
+                  <tbody id="monthlyClosuresTable"></tbody>
+                </table>
+              </div>
+              <div id="monthlyClosuresPagination"></div>
+            </section>
+          </div>
+          <button class="danger mobile-dashboard-logout" id="mobileLogoutButton" type="button" hidden>Salir</button>
+        </section>
+
+        <section class="view" id="pos">
+          <section class="panel wide">
+            <div class="panel-head">
+              <h2>Ventas Abiertas</h2>
+              <div class="product-actions">
+                <button class="primary" id="newCartButton">+ Nueva Venta</button>
+              </div>
+            </div>
+            <div class="cart-tabs" id="cartTabs"></div>
+            <div id="cartWorkspace"></div>
+          </section>
+        </section>
+
+        <section class="view" id="cashClose" hidden>
+          <div class="content-grid">
+            <section class="panel wide">
+              <div class="panel-head">
+                <h2>Cierre de Caja</h2>
+                <label class="inline-date-filter">
+                  <span>Fecha</span>
+                  <input id="cashCloseDate" type="date">
+                </label>
+              </div>
+              <div class="metric-grid compact cash-close-metrics">
+                <article class="metric"><span>Total</span><strong id="cashCloseTotal">$0</strong></article>
+                <article class="metric"><span>Efectivo Esperado</span><strong id="cashCloseExpected">$0</strong></article>
+                <article class="metric"><span>Ventas</span><strong id="cashCloseCount">0</strong></article>
+                <article class="metric"><span>Diferencia</span><strong id="cashCloseDifference">$0</strong></article>
+              </div>
+              <div class="cash-close-grid">
+                <div>
+                  <h3>Ventas por Medio de Pago</h3>
+                  <div class="payment-summary-list" id="cashClosePaymentSummary"></div>
+                </div>
+                <form class="stack-form cash-close-form" id="cashCloseForm">
+                  <label>
+                    <span>Efectivo Contado *</span>
+                    <div class="money-field"><span>$</span><input name="countedCash" id="cashCloseCounted" type="number" min="0" step="1" required></div>
+                  </label>
+                  <label>
+                    <span>Retiros de Caja</span>
+                    <div class="money-field"><span>$</span><input name="withdrawals" id="cashCloseWithdrawals" type="number" min="0" step="1" value="0"></div>
+                  </label>
+                  <label>
+                    <span>Observaciones</span>
+                    <textarea name="notes" id="cashCloseNotes" placeholder="Ej. Faltante, retiro para compras, cambio chico"></textarea>
+                  </label>
+                  <button class="primary" type="submit">Guardar Cierre</button>
+                </form>
+              </div>
+            </section>
+            <aside class="panel side">
+              <h2>Cómo Impacta</h2>
+              <p class="muted">Si falta efectivo, se registra como gasto automático de Diferencia de Caja. Si sobra, queda como ajuste a favor del resultado.</p>
+            </aside>
+          </div>
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Cierres Registrados</h2>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Fecha</th>
+                    <th>Total</th>
+                    <th>Efectivo Esperado</th>
+                    <th>Efectivo Contado</th>
+                    <th>Retiros</th>
+                    <th>Diferencia</th>
+                    <th>Observaciones</th>
+                    <th class="row-actions-head" aria-label="Acciones"></th>
+                  </tr>
+                </thead>
+                <tbody id="cashCloseTable"></tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+
+        <section class="view" id="salesHistory">
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Historial de Ventas</h2>
+            </div>
+            <div class="sales-history-filters">
+              <input id="salesHistoryOrderFilter" type="search" placeholder="Numero de Orden" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" data-no-browser-autofill>
+              <select id="salesHistoryPeriodFilter" aria-label="Filtrar por fecha">
+                <option value="all">Histórico</option>
+                <option value="week">Última Semana</option>
+                <option value="month">Mes Actual</option>
+                <option value="custom">Personalizado</option>
+              </select>
+              <input id="salesHistoryFrom" class="sales-history-custom-date" type="date" aria-label="Desde">
+              <input id="salesHistoryTo" class="sales-history-custom-date" type="date" aria-label="Hasta">
+              <select id="salesHistoryPaymentFilter" aria-label="Filtrar por medio de pago"></select>
+            </div>
+            <div class="table-wrap sales-history-wrap">
+              <table class="sales-history-table">
+                <thead>
+                  <tr>
+                    <th>Orden</th>
+                    <th>Fecha</th>
+                    <th>Canal</th>
+                    <th>Detalle</th>
+                    <th>Medio de Pago</th>
+                    <th>Total</th>
+                    <th class="row-actions-head" aria-label="Acciones"></th>
+                  </tr>
+                </thead>
+                <tbody id="salesHistoryTable"></tbody>
+              </table>
+            </div>
+            <div id="salesHistoryPagination"></div>
+          </section>
+        </section>
+
+        <section class="view" id="catalog">
+          <section class="panel">
+            <div class="panel-head">
+              <div class="product-actions">
+                <button class="primary" id="addProductButton" type="button">Agregar Producto</button>
+                <button class="secondary" id="openPriceUpdateButton" type="button">Modificar Precios</button>
+                <button class="secondary" id="openStockEntryButton" type="button">Agregar Mercadería</button>
+                <button class="secondary" id="openStockHistoryButton" type="button">Historial de Stock</button>
+                <button class="secondary" id="openPublicCatalogButton" type="button">Ver Catálogo</button>
+              </div>
+            </div>
+            <div class="product-filters">
+              <input id="productSearchFilter" placeholder="SKU, barras o descripción">
+              <select id="productSortFilter" aria-label="Ordenar Productos">
+                <option value="alphaAsc">A-Z</option>
+                <option value="alphaDesc">Z-A</option>
+                <option value="recent">Más recientes</option>
+              </select>
+              <select id="productCategoryFilter" aria-label="Filtrar por Categoría"></select>
+              <select id="productSubcategoryFilter" aria-label="Filtrar por Subcategoría"></select>
+              <select id="productStockFilter" aria-label="Filtrar por Stock">
+                <option value="all">Todos</option>
+                <option value="tracked">Con Control de Stock</option>
+                <option value="untracked">Sin Control de Stock</option>
+              </select>
+              <select id="productPublishedFilter" aria-label="Filtrar por catalogo">
+                <option value="all">Catálogo: Todos</option>
+                <option value="published">Publicados</option>
+                <option value="unpublished">No publicados</option>
+              </select>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>SKU</th>
+                    <th>Descripción</th>
+                    <th>Categoría</th>
+                    <th>Color</th>
+                    <th>Precio</th>
+                    <th>Stock</th>
+                    <th>Catálogo</th>
+                    <th class="row-actions-head" aria-label="Acciones"></th>
+                  </tr>
+                </thead>
+                <tbody id="productsTable"></tbody>
+              </table>
+            </div>
+            <div id="productsPagination"></div>
+          </section>
+        </section>
+
+        <section class="view" id="customers">
+          <div class="content-grid">
+            <section class="panel wide">
+              <div class="panel-head">
+                <h2>Ficha de Cliente</h2>
+              </div>
+              <form class="customer-form" id="customerForm" autocomplete="off">
+                <input name="customerId" id="editingCustomerId" type="hidden">
+                <input name="name" placeholder="Nombre *" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" data-no-browser-autofill required>
+                <input name="dni" placeholder="DNI" inputmode="numeric" autocomplete="one-time-code" data-dni-field data-no-browser-autofill>
+                <input name="phone" placeholder="Teléfono" inputmode="tel" autocomplete="one-time-code" data-no-browser-autofill>
+                <div class="money-field"><span>$</span><input name="initialDebt" placeholder="Deuda inicial" type="number" min="0" step="1" autocomplete="one-time-code" data-no-browser-autofill></div>
+                <select name="province" id="customerProvince" autocomplete="off"></select>
+                <textarea name="notes" placeholder="Notas" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" data-no-browser-autofill></textarea>
+                <button class="secondary" id="cancelCustomerEdit" type="button" hidden>Cancelar Edición</button>
+                <button class="primary" id="saveCustomerButton" type="submit">Guardar Cliente</button>
+              </form>
+            </section>
+            <aside class="panel side">
+              <h2>Resumen Clientes</h2>
+              <div class="summary-list" id="customerSummary"></div>
+            </aside>
+          </div>
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Clientes Registrados</h2>
+            </div>
+            <div class="customer-filters">
+              <input id="customerSearch" placeholder="Buscar por Nombre, DNI o Teléfono" autocomplete="off">
+              <select id="customerSortFilter" aria-label="Ordenar clientes">
+                <option value="alpha">Orden Alfabetico</option>
+                <option value="amount">Mayor Importe</option>
+              </select>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Cliente</th>
+                    <th>Ventas</th>
+                    <th>Total Comprado</th>
+                    <th>Deuda</th>
+                    <th>Ticket Promedio</th>
+                    <th class="row-actions-head" aria-label="Acciones"></th>
+                  </tr>
+                </thead>
+                <tbody id="customersTable"></tbody>
+              </table>
+            </div>
+            <div id="customersPagination"></div>
+          </section>
+        </section>
+
+        <section class="view" id="workshop" data-module="workshop" hidden>
+          <div class="split-layout">
+            <section class="panel wide">
+              <div class="panel-head">
+                <h2>Pedidos de Taller</h2>
+              </div>
+              <form class="stack-form" id="workshopForm" autocomplete="off">
+                <div class="form-row">
+                  <div class="customer-sale-field">
+                    <input type="search" name="workshopClientLookup" id="workshopClientLookup" placeholder="Cliente" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" data-no-browser-autofill required>
+                    <div class="customer-inline-suggestions" id="workshopCustomerSuggestions"></div>
+                  </div>
+                  <input name="workshopPhoneEntry" id="workshopPhoneEntry" inputmode="tel" placeholder="Teléfono" autocomplete="one-time-code" data-no-browser-autofill>
+                  <div class="money-field"><span>$</span><input name="workshopPriceEntry" id="workshopPriceEntry" type="text" inputmode="numeric" placeholder="Precio Final" autocomplete="one-time-code" data-no-browser-autofill required></div>
+                </div>
+                <textarea name="description" placeholder="Descripción del Trabajo: Cadenita, cierre, arreglo, observaciones" required></textarea>
+                <button class="primary" type="submit">Registrar Pedido</button>
+              </form>
+              <div class="workshop-filters">
+                <input id="workshopSearch" placeholder="Buscar por Cliente o N&uacute;mero de Orden" autocomplete="off">
+              </div>
+              <div class="records" id="workshopList"></div>
+            </section>
+            <aside class="panel side">
+              <h2>Regla Definida</h2>
+              <p class="muted">El taller cuenta como Venta Local recién cuando se cobra o entrega. También se puede cargar como concepto manual desde Ventas Local.</p>
+            </aside>
+          </div>
+        </section>
+
+        <section class="view" id="online" data-module="onlineSales" hidden>
+          <section class="panel wide">
+              <div class="online-actions">
+                <button class="secondary" id="openAfipPendingButton" type="button">Ventas pendientes de ARCA <span id="afipPendingCount">0</span></button>
+                <button class="secondary compact-online-action" id="openOnlineMissingButton" type="button">Pendientes <span id="onlineMissingCount">0</span></button>
+              </div>
+              <form class="stack-form" id="onlineForm" autocomplete="off">
+                <div class="online-form-grid">
+                  <div class="date-picker-field">
+                    <input id="onlineDateDisplay" class="short-date-input" type="text" placeholder="DD/MM/AA" readonly tabindex="-1" aria-hidden="true">
+                    <input name="date" id="onlineDate" class="native-date-input" type="date" required aria-label="Fecha">
+                  </div>
+                  <input name="orderNumber" placeholder="Número de Venta" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" data-no-browser-autofill required>
+                  <div class="online-customer-field">
+                    <input type="search" name="customerDni" id="onlineCustomerDni" placeholder="DNI cliente" inputmode="numeric" autocomplete="one-time-code" data-dni-field data-no-browser-autofill>
+                    <div class="customer-inline-suggestions" id="onlineCustomerDniSuggestions"></div>
+                  </div>
+                  <div class="online-customer-field">
+                    <input type="search" name="clientLookup" id="onlineClientLookup" placeholder="Buscar cliente" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" data-no-browser-autofill>
+                    <input name="customerId" id="onlineCustomerId" type="hidden">
+                    <div class="customer-inline-suggestions" id="onlineCustomerSuggestions"></div>
+                  </div>
+                  <div class="province-suggest-field">
+                    <input type="search" name="provinceLookup" id="onlineProvince" placeholder="Provincia" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" data-no-browser-autofill required>
+                    <div class="customer-inline-suggestions" id="onlineProvinceSuggestions"></div>
+                  </div>
+                  <select name="store" id="onlineStore" required>
+                    <option value="insumos">Canal 1</option>
+                    <option value="accesorios">Canal 2</option>
+                  </select>
+                  <div class="money-field"><span>$</span><input name="saleAmount" id="onlineSaleAmount" type="number" min="0" step="1" placeholder="Importe" autocomplete="one-time-code" data-no-browser-autofill required></div>
+                  <div class="money-field"><span>$</span><input name="shippingAmount" id="onlineShippingAmount" type="number" min="0" step="1" placeholder="Envío" autocomplete="one-time-code" data-no-browser-autofill></div>
+                  <div class="money-field"><span>$</span><input name="discountAmount" id="onlineDiscountAmount" type="number" min="0" step="1" placeholder="Descuento opcional" autocomplete="one-time-code" data-no-browser-autofill></div>
+                  <select name="paymentMethod" id="onlinePayment" required></select>
+                  <select name="paymentPlatform" id="onlinePaymentPlatform" required></select>
+                </div>
+                <div class="online-cost-preview" id="onlineCostPreview"></div>
+                <div class="online-line-builder">
+                  <div class="category-suggest-field">
+                    <input id="onlineLineCategory" placeholder="Categoría" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" data-no-browser-autofill>
+                    <div class="category-suggestions" id="onlineCategorySuggestions"></div>
+                  </div>
+                  <select id="onlineLineSubcategory" aria-label="Subcategoría"></select>
+                  <input id="onlineLineQty" type="number" min="1" step="1" placeholder="Cantidad">
+                  <button class="secondary" id="addOnlineLine" type="button">Agregar Categoría</button>
+                </div>
+                <div class="online-draft-counter" id="onlineDraftCounter">Articulos: 0</div>
+                <div class="online-lines-preview" id="onlineLinesPreview"></div>
+                <button class="primary" type="submit">Registrar Venta Online</button>
+              </form>
+              <div class="online-list-filters">
+                <select id="onlineSortFilter" aria-label="Ordenar ventas online">
+                  <option value="dateDesc">Fecha: más recientes</option>
+                  <option value="dateAsc">Fecha: más viejas</option>
+                  <option value="orderAsc">Orden: menor a mayor</option>
+                  <option value="orderDesc">Orden: mayor a menor</option>
+                </select>
+                <input id="onlineSearchFilter" placeholder="Búsqueda manual" autocomplete="off">
+                <input id="onlineOrderFilter" type="search" placeholder="Número de orden" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" data-no-browser-autofill>
+                <select id="onlineStoreFilter" aria-label="Filtrar tienda online">
+                  <option value="all">Todas</option>
+                  <option value="insumos">Canal 1</option>
+                  <option value="accesorios">Canal 2</option>
+                </select>
+              </div>
+              <div class="records" id="onlineList"></div>
+              <div id="onlinePagination"></div>
+          </section>
+        </section>
+
+        <section class="view" id="expenses">
+          <section class="panel expense-entry-panel">
+            <form class="expense-entry-form" id="expenseForm" autocomplete="off">
+              <label class="expense-date-field">
+                <span>Fecha *</span>
+                <input name="date" id="expenseDate" type="date" required>
+              </label>
+              <label>
+                <span>Categoría *</span>
+                <select name="category" id="expenseCategorySelect" required></select>
+              </label>
+              <label>
+                <span>Tipo *</span>
+                <select name="entryType" id="expenseEntryType">
+                  <option value="expense">Gasto operativo</option>
+                  <option value="purchase">Mercadería</option>
+                </select>
+              </label>
+              <label>
+                <span>Comportamiento *</span>
+                <select name="behavior" id="expenseBehavior">
+                  <option value="fijo">Fijo</option>
+                  <option value="variable">Variable</option>
+                </select>
+              </label>
+              <label class="expense-concept-field">
+                <span>Concepto *</span>
+                <input name="expenseConceptEntry" id="expenseConcept" placeholder="Ej. Factura de luz" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" data-no-browser-autofill required>
+              </label>
+              <label>
+                <span>Importe *</span>
+                <div class="money-field"><span>$</span><input name="amount" type="number" step="1" placeholder="0" required></div>
+              </label>
+              <button class="primary" id="expenseSubmitButton" type="submit">+ Registrar Gasto</button>
+              <button class="secondary" id="openFixedExpensesButton" type="button">Gastos Fijos</button>
+            </form>
+          </section>
+          <section class="panel expense-filter-panel">
+            <div class="expense-filters">
+              <label>
+                <span>Buscar Concepto</span>
+                <input id="expenseSearchFilter" placeholder="Ej. local, mercadería, mobiliario" autocomplete="off">
+              </label>
+              <label>
+                <span>Año</span>
+                <select id="expenseYearFilter"></select>
+              </label>
+              <label>
+                <span>Mes</span>
+                <select id="expenseMonthFilter">
+                  <option value="all">Todo el Año</option>
+                  <option value="01">Enero</option>
+                  <option value="02">Febrero</option>
+                  <option value="03">Marzo</option>
+                  <option value="04">Abril</option>
+                  <option value="05">Mayo</option>
+                  <option value="06">Junio</option>
+                  <option value="07">Julio</option>
+                  <option value="08">Agosto</option>
+                  <option value="09">Septiembre</option>
+                  <option value="10">Octubre</option>
+                  <option value="11">Noviembre</option>
+                  <option value="12">Diciembre</option>
+                </select>
+              </label>
+              <label>
+                <span>Categoría</span>
+                <select id="expenseCategoryFilter"></select>
+              </label>
+              <label>
+                <span>Tipo</span>
+                <select id="expenseTypeFilter">
+                  <option value="all">Todos</option>
+                  <option value="expense">Operativo</option>
+                  <option value="purchase">Mercadería</option>
+                </select>
+              </label>
+              <label>
+                <span>Comportamiento</span>
+                <select id="expenseBehaviorFilter">
+                  <option value="all">Todos</option>
+                  <option value="fijo">Fijo</option>
+                  <option value="variable">Variable</option>
+                </select>
+              </label>
+              <label>
+                <span>Comisiones</span>
+                <select id="expenseCommissionFilter">
+                  <option value="all">Mostrar</option>
+                  <option value="hide">Ocultar</option>
+                </select>
+              </label>
+              <button class="danger" id="clearExpenseFilters" type="button">Limpiar Filtros</button>
+            </div>
+          </section>
+          <section class="panel expense-table-panel">
+              <div class="expense-table-summary">
+                <span id="expenseFilteredSummary">Total Filtrado = $0 (0 movimientos)</span>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Fecha</th>
+                      <th>Tipo</th>
+                      <th>Categoría</th>
+                      <th>Comportamiento</th>
+                      <th>Concepto</th>
+                      <th>Importe</th>
+                      <th class="row-actions-head" aria-label="Acciones"></th>
+                    </tr>
+                  </thead>
+                  <tbody id="expensesTable"></tbody>
+                </table>
+              </div>
+              <div id="expensesPagination"></div>
+          </section>
+        </section>
+
+        <section class="view" id="reports">
+          <section class="panel">
+            <div class="report-actions-row">
+              <div class="report-controls report-filter-row">
+                <div class="segment" id="reportScopeButtons" aria-label="Canal">
+                  <button class="active" data-report-scope="total">Total</button>
+                  <button data-report-scope="local">Local</button>
+                  <button data-report-scope="web">Web</button>
+                </div>
+                <div class="segment" id="periodButtons">
+                  <button data-period="today">Hoy</button>
+                  <button class="active" data-period="month">Mes Actual</button>
+                  <button data-period="year">Último Año</button>
+                  <button data-period="all">Histórico</button>
+                  <button data-period="custom">Personalizado</button>
+                </div>
+              </div>
+              <div class="report-actions">
+                <button class="secondary" id="exportExcelBackupButton" type="button">Exportar Excel</button>
+                <button class="icon-button settings-gear-button" id="openSettingsButton" type="button" aria-label="Configuración" title="Configuración">&#9881;</button>
+              </div>
+            </div>
+            <div class="report-custom-range is-hidden" id="reportCustomRange">
+              <label>
+                <span>Desde</span>
+                <input id="reportCustomFrom" type="date">
+              </label>
+              <label>
+                <span>Hasta</span>
+                <input id="reportCustomTo" type="date">
+              </label>
+            </div>
+            <div class="metric-grid compact report-metrics">
+              <article class="metric"><span>Ingresos</span><strong id="reportIncome">$0</strong></article>
+              <article class="metric" id="reportShippingCard" hidden><span>Envíos</span><strong id="reportShipping">$0</strong></article>
+              <article class="metric"><span>Gastos</span><strong id="reportExpenses">$0</strong></article>
+              <article class="metric"><span>Costo de Mercadería</span><strong id="reportPurchases">$0</strong></article>
+              <article class="metric mobile-margin-card"><span>Margen</span><strong id="reportMargin">$0</strong></article>
+              <article class="metric"><span>Ticket Promedio</span><strong id="reportTicket">$0</strong></article>
+            </div>
+            <div class="report-sales-counter" id="reportSalesCounter">0 ventas en el periodo</div>
+            <div class="reports-layout">
+              <div class="report-waterfall-panel">
+                <h3>Margen Bruto</h3>
+                <div class="waterfall" id="marginChart"></div>
+              </div>
+              <div class="report-trend-panel is-hidden" id="marginTrendPanel">
+                <div class="trend-panel-head">
+                  <div>
+                    <span class="modal-kicker">Evolución</span>
+                    <h3>Ventas, gastos y margen</h3>
+                    <div class="chart-legend trend-legend">
+                      <span><i class="dot trend-dot-sales"></i>Ventas</span>
+                      <span><i class="dot trend-dot-expenses"></i>Gastos</span>
+                      <span><i class="dot trend-dot-margin"></i>Margen</span>
+                    </div>
+                    <div class="trend-average-summary" id="marginTrendAverages"></div>
+                  </div>
+                  <label class="trend-control">
+                    <span>Orden</span>
+                    <select id="marginTrendOrder">
+                      <option value="chronological">Cronológico</option>
+                      <option value="marginDesc">Mayor Margen</option>
+                      <option value="marginAsc">Menor Margen</option>
+                    </select>
+                  </label>
+                </div>
+                <div class="trend-chart-scroll">
+                  <div class="trend-chart" id="marginTrendChart"></div>
+                </div>
+              </div>
+              <div class="report-detail-card" id="reportCategoriesCard">
+                <div class="report-card-head">
+                  <h3>Categorías Más Vendidas</h3>
+                  <button class="tiny-action" data-expand-report="categories" type="button">Ampliar</button>
+                </div>
+                <div class="bar-list" id="categoryChart"></div>
+              </div>
+              <div class="report-detail-card" id="reportProvincesCard">
+                <div class="report-card-head">
+                  <h3>Destinos Online</h3>
+                  <button class="tiny-action" data-expand-report="provinces" type="button">Ampliar</button>
+                </div>
+                <div class="bar-list" id="provinceChart"></div>
+              </div>
+              <div class="report-detail-card" id="reportSubcategoriesCard">
+                <div class="report-card-head">
+                  <h3>Subcategorías Más Vendidas</h3>
+                  <button class="tiny-action" data-expand-report="subcategories" type="button">Ampliar</button>
+                </div>
+                <div class="bar-list" id="subcategoryChart"></div>
+              </div>
+              <div class="report-detail-card" id="reportPaymentsCard">
+                <div class="report-card-head">
+                  <h3>Medios de Pago</h3>
+                  <button class="tiny-action" data-expand-report="payments" type="button">Ampliar</button>
+                </div>
+                <div class="bar-list" id="paymentChart"></div>
+              </div>
+              <div class="report-detail-card" id="reportExpenseDetailsCard">
+                <div class="report-card-head">
+                  <h3>Gastos por Origen</h3>
+                  <button class="tiny-action" data-expand-report="expenses" type="button">Ampliar</button>
+                </div>
+                <div class="bar-list" id="reportExpenseDetails"></div>
+              </div>
+            </div>
+          </section>
+        </section>
+
+        <section class="view" id="settings">
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Porcentajes</h2>
+            </div>
+            <form class="settings-grid" id="businessSettingsForm">
+              <label data-module="onlineSales" hidden><span>Comisión Tienda Nube %</span><input name="tiendaNubeCommissionRate" type="number" min="0" step="0.01"></label>
+              <label><span>Comisión Mercado Pago %</span><input name="mercadoPagoCommissionRate" type="number" min="0" step="0.01"></label>
+              <label data-module="onlineSales" hidden><span>Comisión Pago nube %</span><input name="pagoNubeCommissionRate" type="number" min="0" step="0.01"></label>
+              <label data-module="onlineSales" hidden><span>Costo Canal 1 %</span><input name="onlineCostInsumos" type="number" min="0" step="0.01"></label>
+              <label data-module="onlineSales" hidden><span>Costo Canal 2 %</span><input name="onlineCostAccesorios" type="number" min="0" step="0.01"></label>
+              <button class="primary" type="submit">Guardar Porcentajes</button>
+            </form>
+          </section>
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Catalogo Publico</h2>
+              <button class="secondary" id="openPublicCatalogSettingsButton" type="button">Ver Catálogo</button>
+            </div>
+            <form class="settings-grid" id="catalogSettingsForm">
+              <label><span>Nombre del negocio</span><input name="businessName" autocomplete="one-time-code" data-no-browser-autofill></label>
+              <label><span>WhatsApp</span><input name="whatsappNumber" inputmode="tel" placeholder="549..." autocomplete="one-time-code" data-no-browser-autofill></label>
+              <label class="full-field"><span>Mensaje predeterminado</span><textarea name="defaultWhatsappMessage" rows="3" autocomplete="one-time-code" data-no-browser-autofill></textarea></label>
+              <label><span>Talles sin stock</span><select name="sizeAvailabilityMode"><option value="show-unavailable">Mostrar como agotado</option><option value="hide-unavailable">Ocultar talle</option></select></label>
+              <label><span>Producto agotado</span><select name="outOfStockProductMode"><option value="show">Mostrar agotado</option><option value="hide">Ocultar automaticamente</option></select></label>
+              <button class="primary" type="submit">Guardar Catalogo</button>
+            </form>
+          </section>
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Gastos Fijos Precargados</h2>
+              <button class="secondary" id="addFixedExpenseTemplateButton" type="button">+ Agregar</button>
+            </div>
+            <div class="table-wrap fixed-expense-settings-wrap">
+              <table>
+                <thead>
+                  <tr><th>Concepto</th><th>Categoría</th><th>Importe Base</th><th></th></tr>
+                </thead>
+                <tbody id="fixedExpenseSettingsTable"></tbody>
+              </table>
+            </div>
+            <div class="modal-actions">
+              <button class="primary" id="saveFixedExpenseTemplatesButton" type="button">Guardar Gastos Fijos</button>
+            </div>
+          </section>
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Categorias y Codigos</h2>
+              <button class="secondary" id="addProductCategorySettingButton" type="button">+ Agregar</button>
+            </div>
+            <div class="table-wrap product-category-settings-wrap">
+              <table>
+                <thead>
+                  <tr><th>Orden</th><th>Activa</th><th>Categoria</th><th>Subcategoria</th><th>Letra Codigo</th><th></th></tr>
+                </thead>
+                <tbody id="productCategorySettingsTable"></tbody>
+              </table>
+            </div>
+            <div class="modal-actions">
+              <button class="primary" id="saveProductCategorySettingsButton" type="button">Guardar Categorias</button>
+            </div>
+          </section>
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Respaldo</h2>
+            </div>
+            <div class="backup-settings-row">
+              <div>
+                <strong>Importar respaldo Excel</strong>
+                <small>Usa el archivo exportado desde Estadísticas y reemplaza los datos actuales.</small>
+              </div>
+              <button class="secondary" id="importBackupButton" type="button">Importar Respaldo</button>
+              <input id="importBackupInput" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
+            </div>
+            <div class="backup-settings-row">
+              <div>
+                <strong>Respaldos automaticos</strong>
+                <small>Antes de cada guardado grande se guarda una copia. Se conservan los ultimos 15.</small>
+              </div>
+              <button class="secondary" id="openRemoteBackupsButton" type="button">Ver Respaldos</button>
+            </div>
+            <div class="backup-settings-row">
+              <div>
+                <strong>Base principal de Supabase</strong>
+                <small>Supabase esta desactivado por seguridad. Se activara cuando creemos la base nueva de BlackShoes.</small>
+              </div>
+              <button class="danger" id="publishLocalPrimaryButton" type="button">Subir esta PC como base</button>
+            </div>
+          </section>
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Historial de Movimientos</h2>
+              <button class="secondary" id="openActivityLogButton" type="button">Ver Movimientos</button>
+            </div>
+            <p class="muted">Registra los ultimos 800 cambios importantes del sistema.</p>
+          </section>
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Usuarios y Pestañas</h2>
+              <button class="secondary" id="refreshUsersButton" type="button">Actualizar Usuarios</button>
+            </div>
+            <div class="table-wrap user-permissions-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Usuario</th>
+                    <th>Estado</th>
+                    <th>Rol</th>
+                    <th>Ultima Conexion</th>
+                    <th>Pestañas visibles</th>
+                  </tr>
+                </thead>
+                <tbody id="userPermissionsTable"></tbody>
+              </table>
+            </div>
+            <div class="modal-actions">
+              <button class="primary" id="saveUserPermissionsButton" type="button">Guardar Permisos</button>
+            </div>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <div class="modal-backdrop" id="productModal" aria-hidden="true">
+      <section class="modal product-modal" role="dialog" aria-modal="true" aria-labelledby="productModalTitle">
+        <button class="modal-close" id="closeProductModal" type="button" aria-label="Cerrar">x</button>
+        <span class="modal-kicker">Productos</span>
+        <h2 id="productModalTitle">Nuevo Producto</h2>
+        <form class="product-modal-form" id="productForm">
+          <input name="editingProductId" id="editingProductId" type="hidden">
+          <label class="modal-field full-field">
+            <span>Nombre *</span>
+            <input name="description" placeholder="Ej. Vestido Olivia Negro" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" data-no-browser-autofill required>
+          </label>
+          <label class="modal-field">
+            <span>Color</span>
+            <input name="color" id="productColor" placeholder="Negro" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" data-no-browser-autofill>
+          </label>
+          <label class="modal-field">
+            <span>Categoría *</span>
+            <select name="category" id="productCategory" required></select>
+          </label>
+          <label class="modal-field">
+            <span>Subcategoría</span>
+            <select name="subcategory" id="productSubcategory"></select>
+          </label>
+          <label class="modal-field">
+            <span>Código *</span>
+            <input name="code" id="productCode" placeholder="Z001" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" data-no-browser-autofill required>
+            <small class="field-hint is-hidden" id="productCodeHint">Automatico por precio en accesorios</small>
+          </label>
+          <label class="modal-field">
+            <span>Costo</span>
+            <div class="money-field"><span>$</span><input name="cost" id="productCost" type="number" min="0" step="1" autocomplete="one-time-code" data-no-browser-autofill></div>
+          </label>
+          <label class="modal-field">
+            <span>Ganancia</span>
+            <div class="input-suffix">
+              <input name="margin" id="productMargin" type="number" min="0" step="0.1" value="50" autocomplete="one-time-code" data-no-browser-autofill>
+              <span>%</span>
+            </div>
+          </label>
+          <label class="modal-field">
+            <span>Precio *</span>
+            <div class="money-field"><span>$</span><input name="price" id="productPrice" type="number" min="0" step="1" autocomplete="one-time-code" data-no-browser-autofill required></div>
+          </label>
+          <label class="modal-field">
+            <span>Precio Promocional</span>
+            <div class="money-field"><span>$</span><input name="promoPrice" id="productPromoPrice" type="number" min="0" step="1" autocomplete="one-time-code" data-no-browser-autofill></div>
+          </label>
+          <label class="modal-field full-field">
+            <span>Fotos para catalogo publico</span>
+            <input name="imageUrls" id="productImageUrls" type="hidden">
+            <input id="productImageFiles" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/avif,image/*" multiple>
+            <small class="field-hint">Podés subir PNG, JPG, WebP y otros formatos de imagen. Si queda vacío, el catálogo muestra el logo.</small>
+            <div class="product-image-preview" id="productImagePreview"></div>
+          </label>
+          <label class="modal-field full-field">
+            <span>Descripcion para catalogo</span>
+            <textarea name="catalogDescription" id="productCatalogDescription" rows="3" placeholder="Detalle visible para clientes" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" data-no-browser-autofill></textarea>
+          </label>
+          <div class="modal-field check-field full-field">
+            <span>Catalogo publico</span>
+            <label class="check"><input name="published" id="productPublished" type="checkbox"> Publicado</label>
+          </div>
+          <label class="modal-field check-field">
+            <span>Stock</span>
+            <label class="check"><input name="tracksStock" id="productTracksStock" type="checkbox"> Controlar Stock</label>
+          </label>
+          <label class="modal-field" id="productStockField">
+            <span id="productStockLabel">Stock Inicial</span>
+            <input name="stock" id="productStock" type="number" min="0" step="1" value="0" autocomplete="one-time-code" data-no-browser-autofill disabled>
+          </label>
+          <section class="product-variant-builder full-field is-hidden" id="productVariantBuilder">
+            <input name="sizeVariants" id="productSizeVariants" type="hidden">
+            <div class="variant-builder-head">
+              <div>
+                <span>Variedades</span>
+                <small>Creá un talle y asignale su stock.</small>
+              </div>
+              <button class="secondary" id="createProductVariant" type="button">Crear Variedad</button>
+            </div>
+            <div class="product-variant-list" id="productVariantList"></div>
+          </section>
+          <div class="product-stock-actions full-field is-hidden" id="productStockActions">
+            <div class="product-stock-counter">
+              <span>Stock Actual</span>
+              <strong id="productStockCounter">0</strong>
+            </div>
+            <section class="stock-adjust-box">
+              <h3>Agregar stock</h3>
+              <div class="stock-adjust-grid">
+                <label class="modal-field">
+                  <span>Cantidad</span>
+                  <input id="productStockAddQuantity" type="number" min="1" step="1" placeholder="0">
+                </label>
+                <label class="modal-field">
+                  <span>Costo Unitario</span>
+                  <div class="money-field"><span>$</span><input id="productStockAddCost" type="number" min="0" step="1" placeholder="Sin costo"></div>
+                </label>
+                <label class="modal-field">
+                  <span>Detalle</span>
+                  <input id="productStockAddNote" placeholder="Reposicion de Mercaderia">
+                </label>
+              </div>
+            </section>
+            <section class="stock-adjust-box">
+              <h3>Reducir stock</h3>
+              <div class="stock-adjust-grid reduce-grid">
+                <label class="modal-field">
+                  <span>Cantidad</span>
+                  <div class="negative-number-field"><span>-</span><input id="productStockReduceQuantity" type="number" min="1" step="1" placeholder="0"></div>
+                </label>
+                <label class="modal-field check-field">
+                  <span>Motivo</span>
+                  <label class="check"><input id="productStockReduceGift" type="checkbox"> Regalo / muestra (no descuenta gasto)</label>
+                </label>
+                <label class="modal-field">
+                  <span>Detalle</span>
+                  <input id="productStockReduceNote" placeholder="Correccion de stock">
+                </label>
+              </div>
+              <button class="danger" id="applyProductStockReduce" type="button">Reducir stock</button>
+            </section>
+          </div>
+          <div class="modal-actions">
+            <button class="secondary" id="cancelProductModal" type="button">Cancelar</button>
+            <button class="primary" id="saveProductButton" type="submit">Guardar Producto</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
+    <div class="modal-backdrop" id="priceUpdateModal" aria-hidden="true">
+      <section class="modal" role="dialog" aria-modal="true" aria-labelledby="priceUpdateTitle">
+        <button class="modal-close" id="closePriceUpdateModal" type="button" aria-label="Cerrar">x</button>
+        <span class="modal-kicker">Productos</span>
+        <h2 id="priceUpdateTitle">Modificar Precios</h2>
+        <form class="product-modal-form" id="priceUpdateForm">
+          <label class="modal-field">
+            <span>Aplicar a</span>
+            <select name="scope" id="priceUpdateScope">
+              <option value="all">Todos los Productos</option>
+              <option value="category">Una Categoría</option>
+            </select>
+          </label>
+          <label class="modal-field price-category-field">
+            <span>Categoría</span>
+            <select name="category" id="priceUpdateCategory"></select>
+          </label>
+          <label class="modal-field">
+            <span>Porcentaje</span>
+            <div class="input-suffix">
+              <input name="percent" type="number" step="0.1" value="10" required>
+              <span>%</span>
+            </div>
+          </label>
+          <p class="modal-note full-field" id="priceUpdatePreview"></p>
+          <div class="modal-actions">
+            <button class="secondary" id="cancelPriceUpdateModal" type="button">Cancelar</button>
+            <button class="primary" type="submit">Aplicar Cambio</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
+    <div class="modal-backdrop" id="manualItemModal" aria-hidden="true">
+      <section class="modal" role="dialog" aria-modal="true" aria-labelledby="manualItemTitle">
+        <button class="modal-close" id="closeManualItemModal" type="button" aria-label="Cerrar">x</button>
+        <span class="modal-kicker">Clientes</span>
+        <h2 id="manualItemTitle">Agregar Manual</h2>
+        <form class="product-modal-form" id="manualItemForm" autocomplete="off">
+          <label class="modal-field full-field">
+            <span>Producto / Concepto</span>
+            <input name="description" id="manualItemDescription" placeholder="Ej. Arreglo rápido, varios, ajuste" required>
+          </label>
+          <label class="modal-field full-field">
+            <span>Precio</span>
+            <div class="money-field"><span>$</span><input name="price" id="manualItemPrice" type="number" min="0" step="1" placeholder="Importe" autocomplete="one-time-code" data-no-browser-autofill required></div>
+          </label>
+          <div class="modal-actions">
+            <button class="secondary" id="cancelManualItemModal" type="button">Cancelar</button>
+            <button class="primary" type="submit">Agregar a la Venta</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
+    <div class="modal-backdrop" id="customerPickerModal" aria-hidden="true">
+      <section class="modal" role="dialog" aria-modal="true" aria-labelledby="customerPickerTitle">
+        <button class="modal-close" id="closeCustomerPickerModal" type="button" aria-label="Cerrar">x</button>
+        <span class="modal-kicker">Ventas Locales</span>
+        <h2 id="customerPickerTitle">Elegir Cliente</h2>
+        <input id="customerPickerCartId" type="hidden">
+        <input id="customerPickerMode" type="hidden" value="cart">
+        <label class="modal-field full-field">
+          <span>Cliente</span>
+          <input id="customerPickerSearch" class="customer-picker-search" placeholder="Buscar por Nombre, DNI o Teléfono" autocomplete="off">
+        </label>
+        <div class="customer-picker-list" id="customerPickerList"></div>
+        <div class="modal-actions">
+          <button class="secondary" id="cancelCustomerPickerModal" type="button">Cancelar</button>
+        </div>
+      </section>
+    </div>
+
+    <div class="modal-backdrop" id="customerRegisterModal" aria-hidden="true">
+      <section class="modal" role="dialog" aria-modal="true" aria-labelledby="customerRegisterTitle">
+        <button class="modal-close" id="closeCustomerRegisterModal" type="button" aria-label="Cerrar">x</button>
+        <span class="modal-kicker">Clientes</span>
+        <h2 id="customerRegisterTitle">Registrar Cliente</h2>
+        <p class="confirm-message" id="customerRegisterMessage"></p>
+        <form class="product-modal-form compact-form" id="customerRegisterForm">
+          <label class="modal-field full-field">
+            <span>Nombre</span>
+            <input name="name" autocomplete="off" required>
+          </label>
+          <label class="modal-field full-field">
+            <span>DNI</span>
+            <input name="dni" inputmode="numeric" autocomplete="one-time-code" data-dni-field data-no-browser-autofill>
+          </label>
+          <label class="modal-field full-field">
+            <span>Telefono</span>
+            <input name="phone" autocomplete="off" inputmode="tel" placeholder="Numero de telefono">
+          </label>
+          <input name="province" type="hidden">
+          <div class="modal-actions">
+            <button class="secondary" id="cancelCustomerRegisterModal" type="button">No registrar</button>
+            <button class="primary" type="submit">Registrar y continuar</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
+    <div class="modal-backdrop" id="customerEditModal" aria-hidden="true">
+      <section class="modal" role="dialog" aria-modal="true" aria-labelledby="customerEditTitle">
+        <button class="modal-close" id="closeCustomerEditModal" type="button" aria-label="Cerrar">x</button>
+        <span class="modal-kicker">Clientes</span>
+        <h2 id="customerEditTitle">Editar Cliente</h2>
+        <form class="product-modal-form compact-form" id="customerEditForm" autocomplete="off">
+          <input name="customerId" type="hidden">
+          <label class="modal-field full-field">
+            <span>Nombre</span>
+            <input name="name" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" data-no-browser-autofill required>
+          </label>
+          <label class="modal-field full-field">
+            <span>DNI</span>
+            <input name="dni" inputmode="numeric" autocomplete="one-time-code" data-dni-field data-no-browser-autofill>
+          </label>
+          <label class="modal-field full-field">
+            <span>Telefono</span>
+            <input name="phone" autocomplete="one-time-code" inputmode="tel" data-no-browser-autofill>
+          </label>
+          <label class="modal-field full-field">
+            <span>Deuda inicial</span>
+            <div class="money-field"><span>$</span><input name="initialDebt" type="number" min="0" step="1" autocomplete="one-time-code" data-no-browser-autofill></div>
+          </label>
+          <label class="modal-field full-field">
+            <span>Provincia</span>
+            <select name="province" autocomplete="off"></select>
+          </label>
+          <label class="modal-field full-field">
+            <span>Notas</span>
+            <textarea name="notes" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" data-no-browser-autofill></textarea>
+          </label>
+          <div class="modal-actions">
+            <button class="secondary" id="cancelCustomerEditModal" type="button">Cancelar</button>
+            <button class="primary" type="submit">Guardar Cambios</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
+    <div class="modal-backdrop" id="customerInfoModal" aria-hidden="true">
+      <section class="modal wide-modal" role="dialog" aria-modal="true" aria-labelledby="customerInfoTitle">
+        <button class="modal-close" id="closeCustomerInfoModal" type="button" aria-label="Cerrar">x</button>
+        <span class="modal-kicker">Clientes</span>
+        <h2 id="customerInfoTitle">Detalle de Ventas</h2>
+        <p class="customer-info-meta" id="customerInfoMeta"></p>
+        <div class="customer-debt-panel" id="customerDebtPanel"></div>
+        <form class="customer-debt-form" id="customerDebtPaymentForm" autocomplete="off" hidden>
+          <input name="customerId" id="customerDebtCustomerId" type="hidden">
+          <label>
+            <span>Selector de deuda</span>
+            <select name="saleId" id="customerDebtSaleSelect" required></select>
+          </label>
+          <label>
+            <span>Fecha</span>
+            <input name="date" id="customerDebtPaymentDate" type="text" inputmode="numeric" placeholder="DD/MM/AA" required>
+          </label>
+          <label>
+            <span>Importe pagado</span>
+            <div class="money-field"><span>$</span><input name="amount" type="number" min="1" step="1" required></div>
+          </label>
+          <label>
+            <span>Medio</span>
+            <select name="paymentMethod" id="customerDebtPaymentMethod" required></select>
+          </label>
+          <label class="customer-debt-notes">
+            <span>Nota</span>
+            <input name="notes" placeholder="Opcional" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" data-no-browser-autofill>
+          </label>
+          <button class="primary" type="submit">Registrar Pago</button>
+        </form>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Fecha</th>
+                <th>Canal</th>
+                <th>Orden</th>
+                <th>Medio</th>
+                <th>Detalle</th>
+                <th>Total</th>
+              </tr>
+            </thead>
+            <tbody id="customerInfoSales"></tbody>
+          </table>
+        </div>
+        <div id="customerInfoPagination"></div>
+        <div class="modal-actions">
+          <button class="danger" id="closeCustomerInfoButton" type="button">Cerrar</button>
+        </div>
+      </section>
+    </div>
+
+    <div class="modal-backdrop" id="reportExpandModal" aria-hidden="true">
+      <section class="modal wide-modal report-expand-modal" role="dialog" aria-modal="true" aria-labelledby="reportExpandTitle">
+        <button class="modal-close" id="closeReportExpandModal" type="button" aria-label="Cerrar">x</button>
+        <span class="modal-kicker">Estadísticas</span>
+        <h2 id="reportExpandTitle">Detalle</h2>
+        <p class="customer-info-meta" id="reportExpandMeta"></p>
+        <div class="bar-list report-expand-list" id="reportExpandChart"></div>
+        <div class="modal-actions">
+          <button class="danger" id="closeReportExpandButton" type="button">Cerrar</button>
+        </div>
+      </section>
+    </div>
+
+    <div class="modal-backdrop" id="afipPendingModal" aria-hidden="true">
+      <section class="modal wide-modal afip-modal" role="dialog" aria-modal="true" aria-labelledby="afipPendingTitle">
+        <button class="modal-close" id="closeAfipPendingModal" type="button" aria-label="Cerrar">x</button>
+        <span class="modal-kicker">ARCA</span>
+        <h2 id="afipPendingTitle">Ventas pendientes</h2>
+        <p class="customer-info-meta">Marcá las ventas que ya cargaste y confirmá todo junto.</p>
+        <div class="afip-pending-list" id="afipPendingList"></div>
+        <div class="modal-actions">
+          <button class="secondary" id="cancelAfipPendingModal" type="button">Cancelar</button>
+          <button class="primary" id="confirmAfipPendingButton" type="button">Confirmar Cargadas</button>
+        </div>
+      </section>
+    </div>
+
+    <div class="modal-backdrop" id="onlineMissingModal" aria-hidden="true">
+      <section class="modal wide-modal afip-modal" role="dialog" aria-modal="true" aria-labelledby="onlineMissingTitle">
+        <button class="modal-close" id="closeOnlineMissingModal" type="button" aria-label="Cerrar">x</button>
+        <span class="modal-kicker">Ventas Online</span>
+        <h2 id="onlineMissingTitle">Números pendientes</h2>
+        <p class="customer-info-meta">El sistema detecta saltos entre ventas online cargadas. Marcá los números que confirmaste como cancelados o resueltos.</p>
+        <div class="online-missing-list" id="onlineMissingList"></div>
+        <div class="modal-actions">
+          <button class="secondary" id="cancelOnlineMissingModal" type="button">Cancelar</button>
+          <button class="primary" id="confirmOnlineMissingButton" type="button">Marcar Resueltos</button>
+        </div>
+      </section>
+    </div>
+
+    <div class="modal-backdrop" id="stockEntryModal" aria-hidden="true">
+      <section class="modal wide-modal" role="dialog" aria-modal="true" aria-labelledby="stockEntryTitle">
+        <button class="modal-close" id="closeStockEntryModal" type="button" aria-label="Cerrar">x</button>
+        <span class="modal-kicker">Stock</span>
+        <h2 id="stockEntryTitle">Agregar Mercadería</h2>
+        <form class="product-modal-form" id="stockEntryForm">
+          <label class="modal-field full-field">
+            <span>Producto con Control de Stock</span>
+            <input name="productQuery" id="stockEntryProductSearch" list="stockEntryProductOptions" placeholder="Escribí Código, Barras o Nombre" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" data-no-browser-autofill required>
+            <input name="productId" id="stockEntryProduct" type="hidden">
+            <datalist id="stockEntryProductOptions"></datalist>
+          </label>
+          <label class="modal-field">
+            <span>Variedad / Talle</span>
+            <select name="size" id="stockEntrySize" disabled>
+              <option value="">Elegí un producto</option>
+            </select>
+          </label>
+          <label class="modal-field">
+            <span>Precio Actual</span>
+            <div class="money-field"><span>$</span><input id="stockEntryCurrentPrice" type="number" min="0" step="1" readonly tabindex="-1" placeholder="Elegí un Producto"></div>
+          </label>
+          <label class="modal-field">
+            <span>Ganancia</span>
+            <div class="input-suffix">
+              <input id="stockEntryCurrentMargin" type="number" min="0" step="0.1" readonly tabindex="-1" placeholder="-">
+              <span>%</span>
+            </div>
+          </label>
+          <label class="modal-field">
+            <span>Cantidad</span>
+            <input name="quantity" type="number" min="1" step="1" required>
+          </label>
+          <label class="modal-field">
+            <span>Costo Unitario Opcional</span>
+            <div class="money-field"><span>$</span><input name="unitCost" id="stockEntryUnitCost" type="number" min="0" step="1" placeholder="Sin costo"></div>
+          </label>
+          <label class="modal-field">
+            <span>Si Agregás Costo</span>
+            <select name="priceAction" id="stockEntryPriceAction">
+              <option value="keep">Dejar precio igual</option>
+              <option value="recalculate">Recalcular precio manteniendo ganancia</option>
+            </select>
+          </label>
+          <label class="modal-field full-field">
+            <span>Detalle</span>
+            <input name="note" value="Reposición de Mercadería" placeholder="Ej. Reposición de Mercadería">
+          </label>
+          <div class="modal-actions">
+            <button class="secondary" id="cancelStockEntryModal" type="button">Cancelar</button>
+            <button class="secondary" type="submit">Agregar a la Lista</button>
+            <button class="primary" id="confirmStockEntryBatch" type="button">Confirmar Todo</button>
+          </div>
+        </form>
+        <div class="stock-entry-preview" id="stockEntryPreview"></div>
+      </section>
+    </div>
+
+    <div class="modal-backdrop" id="stockHistoryModal" aria-hidden="true">
+      <section class="modal wide-modal" role="dialog" aria-modal="true" aria-labelledby="stockHistoryTitle">
+        <button class="modal-close" id="closeStockHistoryModal" type="button" aria-label="Cerrar">x</button>
+        <span class="modal-kicker">Stock</span>
+        <h2 id="stockHistoryTitle">Historial de Stock</h2>
+        <div class="history-filters">
+          <label class="modal-field">
+            <span>Producto</span>
+            <input id="stockHistoryProductSearch" list="stockHistoryProductOptions" placeholder="Todos o escribí Código, Barras o Nombre" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" data-no-browser-autofill>
+            <input id="stockHistoryProduct" type="hidden" value="all">
+            <datalist id="stockHistoryProductOptions"></datalist>
+          </label>
+          <label class="modal-field">
+            <span>Tipo</span>
+            <select id="stockHistoryType">
+              <option value="all">Todos</option>
+              <option value="entrada">Entradas</option>
+              <option value="venta">Ventas</option>
+              <option value="ajuste">Ajustes</option>
+            </select>
+          </label>
+          <label class="modal-field">
+            <span>Desde</span>
+            <input id="stockHistoryFrom" class="short-date-input" placeholder="DD/MM/AA" inputmode="numeric">
+          </label>
+          <label class="modal-field">
+            <span>Hasta</span>
+            <input id="stockHistoryTo" class="short-date-input" placeholder="DD/MM/AA" inputmode="numeric">
+          </label>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Fecha</th>
+                <th>Producto</th>
+                <th>Tipo</th>
+                <th>Cantidad</th>
+                <th>Stock Final</th>
+                <th>Detalle</th>
+              </tr>
+            </thead>
+            <tbody id="stockHistoryTable"></tbody>
+          </table>
+        </div>
+        <div id="stockHistoryPagination"></div>
+      </section>
+    </div>
+
+    <div class="modal-backdrop" id="workshopPriceModal" aria-hidden="true" data-module="workshop" hidden>
+      <section class="modal confirm-modal" role="dialog" aria-modal="true" aria-labelledby="workshopPriceTitle">
+        <button class="modal-close" id="closeWorkshopPriceModal" type="button" aria-label="Cerrar">x</button>
+        <span class="modal-kicker">Taller</span>
+        <h2 id="workshopPriceTitle">Editar Precio</h2>
+        <form class="product-modal-form" id="workshopPriceForm">
+          <input name="orderId" id="workshopPriceOrderId" type="hidden">
+          <label class="modal-field full-field">
+            <span>Nuevo Precio</span>
+            <div class="money-field"><span>$</span><input name="price" id="workshopPriceInput" type="number" min="0" step="1" required></div>
+          </label>
+          <div class="modal-actions">
+            <button class="danger" id="cancelWorkshopPriceModal" type="button">Cancelar</button>
+            <button class="primary" type="submit">Guardar Precio</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
+    <div class="modal-backdrop" id="workshopDeliveryModal" aria-hidden="true" data-module="workshop" hidden>
+      <section class="modal confirm-modal workshop-delivery-modal" role="dialog" aria-modal="true" aria-labelledby="workshopDeliveryTitle">
+        <button class="modal-close" id="closeWorkshopDeliveryModal" type="button" aria-label="Cerrar">x</button>
+        <span class="modal-kicker">Taller</span>
+        <h2 id="workshopDeliveryTitle">Entregar Pedido</h2>
+        <form class="product-modal-form" id="workshopDeliveryForm">
+          <input name="orderId" id="workshopDeliveryOrderId" type="hidden">
+          <label class="modal-field full-field">
+            <span>Medio de Pago</span>
+            <select name="paymentMethod" id="workshopDeliveryPayment" required></select>
+          </label>
+          <p class="modal-note full-field" id="workshopDeliveryPreview"></p>
+          <div class="modal-actions">
+            <button class="danger" id="cancelWorkshopDeliveryModal" type="button">Cancelar</button>
+            <button class="primary" type="submit">Entregar y Registrar Venta</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
+    <div class="modal-backdrop" id="stockCostUpdateModal" aria-hidden="true">
+      <section class="modal confirm-modal" role="dialog" aria-modal="true" aria-labelledby="stockCostUpdateTitle">
+        <button class="modal-close" id="closeStockCostUpdateModal" type="button" aria-label="Cerrar">x</button>
+        <span class="modal-kicker">Productos</span>
+        <h2 id="stockCostUpdateTitle">Actualizar valor de costo?</h2>
+        <p class="confirm-message" id="stockCostUpdateMessage"></p>
+        <div class="stock-cost-price-panel is-hidden" id="stockCostPricePanel">
+          <div class="summary-row"><span>Precio actual</span><strong id="stockCostCurrentPrice">$0</strong></div>
+          <label class="modal-field">
+            <span>% Ganancia</span>
+            <div class="input-suffix">
+              <input id="stockCostMargin" type="number" min="0" step="0.1">
+              <span>%</span>
+            </div>
+          </label>
+          <label class="modal-field">
+            <span>Precio recalculado</span>
+            <div class="money-field"><span>$</span><input id="stockCostRecalculatedPrice" type="number" min="0" step="1"></div>
+          </label>
+          <label class="check stock-cost-price-check"><input id="stockCostUpdatePrice" type="checkbox" checked> Actualizar tambien el precio</label>
+        </div>
+        <div class="modal-actions">
+          <button class="secondary" id="stockCostKeepCost" type="button">No actualizar costo</button>
+          <button class="primary" id="stockCostAcceptCost" type="button">Si, actualizar costo</button>
+        </div>
+      </section>
+    </div>
+
+    <div class="modal-backdrop" id="fixedExpensesModal" aria-hidden="true">
+      <section class="modal wide-modal fixed-expenses-modal" role="dialog" aria-modal="true" aria-labelledby="fixedExpensesTitle">
+        <button class="modal-close" id="closeFixedExpensesModal" type="button" aria-label="Cerrar">x</button>
+        <span class="modal-kicker">Gastos</span>
+        <h2 id="fixedExpensesTitle">Gastos Fijos</h2>
+        <label class="modal-field fixed-expenses-date">
+          <span>Fecha de carga</span>
+          <input id="fixedExpensesDate" type="date">
+        </label>
+        <div class="table-wrap fixed-expenses-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Cargar</th>
+                <th>Concepto</th>
+                <th>Categoría</th>
+                <th>Importe</th>
+              </tr>
+            </thead>
+            <tbody id="fixedExpensesTable"></tbody>
+          </table>
+        </div>
+        <div class="modal-actions">
+          <button class="secondary" id="cancelFixedExpensesModal" type="button">Cancelar</button>
+          <button class="primary" id="confirmFixedExpensesButton" type="button">Cargar Gastos Fijos</button>
+        </div>
+      </section>
+    </div>
+
+    <div class="modal-backdrop" id="saleEditModal" aria-hidden="true">
+      <section class="modal wide-modal" role="dialog" aria-modal="true" aria-labelledby="saleEditTitle">
+        <button class="modal-close" id="closeSaleEditModal" type="button" aria-label="Cerrar">x</button>
+        <span class="modal-kicker">Ventas</span>
+        <h2 id="saleEditTitle">Editar venta</h2>
+        <form class="product-modal-form" id="saleEditForm">
+          <input name="saleId" id="saleEditId" type="hidden">
+          <input name="onlineOrderId" id="saleEditOnlineOrderId" type="hidden">
+          <label class="modal-field"><span>Fecha</span><input name="date" id="saleEditDate" type="date"></label>
+          <label class="modal-field"><span>Número / Orden</span><input name="orderNumber" id="saleEditOrder" autocomplete="new-password" autocapitalize="off" spellcheck="false"></label>
+          <label class="modal-field online-sale-edit-field"><span>Importe</span><div class="money-field"><span>$</span><input name="grossAmount" id="saleEditGross" type="number" min="0" step="1" autocomplete="one-time-code" data-no-browser-autofill></div></label>
+          <label class="modal-field online-sale-edit-field"><span>Envío cobrado</span><div class="money-field"><span>$</span><input name="shippingAmount" id="saleEditShipping" type="number" min="0" step="1"></div></label>
+          <label class="modal-field online-sale-edit-field"><span>Descuento opcional</span><div class="money-field"><span>$</span><input name="discountAmount" id="saleEditDiscount" type="number" min="0" step="1" autocomplete="one-time-code" data-no-browser-autofill></div></label>
+          <label class="modal-field"><span>Total venta</span><div class="money-field"><span>$</span><input name="total" id="saleEditTotal" type="number" min="0" step="1"></div></label>
+          <label class="modal-field"><span>Medio de pago</span><select name="paymentMethod" id="saleEditPayment"></select></label>
+          <label class="modal-field online-sale-edit-field"><span>Plataforma</span><select name="paymentPlatform" id="saleEditPlatform"></select></label>
+          <label class="modal-field online-sale-edit-field"><span>Tienda</span><select name="onlineStore" id="saleEditStore"><option value="insumos">Canal 1</option><option value="accesorios">Canal 2</option></select></label>
+          <label class="modal-field online-sale-edit-field"><span>Provincia</span><input name="province" id="saleEditProvince" autocomplete="new-password" autocapitalize="off" spellcheck="false"></label>
+          <label class="modal-field"><span>Cliente</span><input name="customerName" id="saleEditCustomer"></label>
+          <div class="modal-actions">
+            <button class="secondary" id="cancelSaleEditModal" type="button">Cancelar</button>
+            <button class="primary" type="submit">Guardar Cambios</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
+    <div class="modal-backdrop" id="saleInfoModal" aria-hidden="true">
+      <section class="modal wide-modal sale-info-modal" role="dialog" aria-modal="true" aria-labelledby="saleInfoTitle">
+        <button class="modal-close" id="closeSaleInfoModal" type="button" aria-label="Cerrar">x</button>
+        <span class="modal-kicker">Historial de Ventas</span>
+        <h2 id="saleInfoTitle">Detalle de venta</h2>
+        <div class="sale-info-content" id="saleInfoContent"></div>
+        <div class="modal-actions">
+          <button class="danger" id="closeSaleInfoButton" type="button">Cerrar</button>
+        </div>
+      </section>
+    </div>
+
+    <div class="modal-backdrop" id="settingsPasswordModal" aria-hidden="true">
+      <section class="modal confirm-modal" role="dialog" aria-modal="true" aria-labelledby="settingsPasswordTitle">
+        <button class="modal-close" id="closeSettingsPasswordModal" type="button" aria-label="Cerrar">x</button>
+        <span class="modal-kicker">Configuración</span>
+        <h2 id="settingsPasswordTitle">Ingresar contraseña</h2>
+        <form class="product-modal-form compact-form" id="settingsPasswordForm">
+          <label class="modal-field full-field">
+            <span>Contraseña</span>
+            <input name="password" id="settingsPasswordInput" type="password" autocomplete="current-password">
+          </label>
+          <p class="form-error is-hidden" id="settingsPasswordError">Contraseña incorrecta.</p>
+          <div class="modal-actions">
+            <button class="secondary" id="cancelSettingsPasswordModal" type="button">Cancelar</button>
+            <button class="primary" type="submit">Ingresar</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
+    <div class="modal-backdrop" id="activityLogModal" aria-hidden="true">
+      <section class="modal wide-modal activity-log-modal" role="dialog" aria-modal="true" aria-labelledby="activityLogTitle">
+        <button class="modal-close" id="closeActivityLogModal" type="button" aria-label="Cerrar">x</button>
+        <span class="modal-kicker">Configuracion</span>
+        <h2 id="activityLogTitle">Historial de Movimientos</h2>
+        <div class="activity-log-filters">
+          <select id="activityUserFilter" aria-label="Filtrar por usuario"></select>
+          <select id="activityTypeFilter" aria-label="Filtrar por tipo"></select>
+          <input id="activitySearchFilter" placeholder="Buscar accion o detalle" autocomplete="off">
+        </div>
+        <div class="table-wrap activity-log-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Fecha</th>
+                <th>Usuario</th>
+                <th>Tipo</th>
+                <th>Accion</th>
+                <th>Detalle</th>
+              </tr>
+            </thead>
+            <tbody id="activityLogTable"></tbody>
+          </table>
+        </div>
+        <div id="activityLogPagination"></div>
+        <div class="modal-actions">
+          <button class="danger" id="closeActivityLogButton" type="button">Cerrar</button>
+        </div>
+      </section>
+    </div>
+
+    <div class="modal-backdrop" id="remoteBackupsModal" aria-hidden="true">
+      <section class="modal wide-modal remote-backups-modal" role="dialog" aria-modal="true" aria-labelledby="remoteBackupsTitle">
+        <button class="modal-close" id="closeRemoteBackupsModal" type="button" aria-label="Cerrar">x</button>
+        <span class="modal-kicker">Configuracion</span>
+        <h2 id="remoteBackupsTitle">Respaldos Automaticos</h2>
+        <p class="muted">Se guardan antes de cada guardado grande y solo quedan los ultimos 15.</p>
+        <div class="table-wrap remote-backups-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Fecha</th>
+                <th>Motivo</th>
+                <th>Datos</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="remoteBackupsTable"></tbody>
+          </table>
+        </div>
+        <div class="modal-actions">
+          <button class="danger" id="closeRemoteBackupsButton" type="button">Cerrar</button>
+        </div>
+      </section>
+    </div>
+
+    <div class="modal-backdrop" id="confirmModal" aria-hidden="true">
+      <section class="modal confirm-modal" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+        <button class="modal-close" id="closeConfirmModal" type="button" aria-label="Cerrar">x</button>
+        <span class="modal-kicker">Confirmacion</span>
+        <h2 id="confirmTitle">Confirmar accion</h2>
+        <p class="confirm-message" id="confirmMessage"></p>
+        <div class="modal-actions">
+          <button class="secondary" id="cancelConfirmModal" type="button">Cancelar</button>
+          <button class="primary" id="confirmActionButton" type="button">Confirmar</button>
+        </div>
+      </section>
+    </div>
+
+    <div class="modal-backdrop auth-backdrop" id="authModal" aria-hidden="true">
+      <section class="modal confirm-modal auth-modal" role="dialog" aria-modal="true" aria-labelledby="authTitle">
+        <span class="modal-kicker">BlackShoes</span>
+        <h2 id="authTitle">Ingresar al sistema</h2>
+        <p class="modal-note">Usá el email autorizado para sincronizar los datos con Supabase.</p>
+        <form class="product-modal-form compact-form" id="authForm">
+          <label class="modal-field full-field">
+            <span>Email</span>
+            <input name="email" id="authEmail" type="email" autocomplete="email" required>
+          </label>
+          <label class="modal-field full-field">
+            <span>Contraseña</span>
+            <input name="password" id="authPassword" type="password" autocomplete="current-password" required>
+          </label>
+          <p class="form-error is-hidden" id="authError"></p>
+          <p class="modal-note" id="authMessage"></p>
+          <div class="modal-actions">
+            <button class="secondary" id="authSignupButton" type="button">Crear Usuario</button>
+            <button class="primary" type="submit">Ingresar</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
+    <div class="action-toast" id="actionToast" role="status" aria-live="polite"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="app.js?v=238"></script>
+    <script>
+      if ("serviceWorker" in navigator && location.protocol !== "file:") {
+        navigator.serviceWorker.register("sw.js?v=249");
+      }
+    </script>
+  </body>
+</html>

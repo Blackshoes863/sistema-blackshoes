@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Cargando demo BlackShoes</title>
+  </head>
+  <body>
+    <p>Cargando datos de prueba...</p>
+    <script>
+      (() => {
+        const STORE_KEY = "blackshoes-control-v1";
+        const now = new Date();
+        const iso = (date) => {
+          const value = new Date(date);
+          return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
+        };
+        const today = iso(now);
+        const daysAgo = (days) => {
+          const date = new Date(now);
+          date.setDate(date.getDate() - days);
+          return iso(date);
+        };
+        const currentMonth = today.slice(0, 7);
+        const svgImage = (title, color, accent) => `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(`
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 1100">
+            <rect width="900" height="1100" fill="${color}"/>
+            <path d="M130 790 C245 670 370 650 510 680 C640 708 720 680 790 610 L820 660 C755 755 630 820 455 805 C315 793 220 815 135 890 Z" fill="${accent}" opacity=".92"/>
+            <circle cx="690" cy="250" r="116" fill="${accent}" opacity=".22"/>
+            <text x="72" y="128" fill="#111" font-family="Arial, sans-serif" font-size="58" font-weight="800">${title}</text>
+            <text x="72" y="205" fill="#333" font-family="Arial, sans-serif" font-size="34" font-weight="700">BlackShoes</text>
+          </svg>
+        `)}`;
+        const sizes = (stockBySize) => Object.entries(stockBySize).map(([size, stock]) => ({ size, stock }));
+        const stockTotal = (variants) => variants.reduce((total, item) => total + Number(item.stock || 0), 0);
+        const products = [
+          {
+            id: "seed-product-hoodie-negro",
+            code: "H",
+            description: "Hoodie Essential",
+            color: "Negro",
+            unit: "Unidad",
+            category: "Hoodies",
+            subcategory: "Urbano",
+            cost: 28500,
+            margin: 90,
+            price: 54900,
+            promoPrice: 49900,
+            tracksStock: true,
+            sizeVariants: sizes({ S: 2, M: 4, L: 3, XL: 1, XXL: 0 }),
+            published: true,
+            catalogDescription: "Hoodie frizado de uso urbano, corte comodo y capucha amplia.",
+            images: [svgImage("Hoodie Essential", "#f1f2f4", "#111111")],
+            createdAt: `${daysAgo(9)}T10:00:00.000Z`,
+          },
+          {
+            id: "seed-product-remera-blanca",
+            code: "R",
+            description: "Remera Box Fit",
+            color: "Blanco",
+            unit: "Unidad",
+            category: "Remeras",
+            subcategory: "Urbano",
+            cost: 9200,
+            margin: 95,
+            price: 18900,
+            promoPrice: 0,
+            tracksStock: true,
+            sizeVariants: sizes({ S: 5, M: 3, L: 2, XL: 1, XXL: 0 }),
+            published: true,
+            catalogDescription: "Remera box fit de algodon, ideal para looks urbanos.",
+            images: [svgImage("Remera Box Fit", "#ffffff", "#d9a441")],
+            createdAt: `${daysAgo(7)}T10:00:00.000Z`,
+          },
+          {
+            id: "seed-product-zapatilla-gris",
+            code: "Z",
+            description: "Zapatilla Runner 90",
+            color: "Gris",
+            unit: "Par",
+            category: "Zapatillas",
+            subcategory: "Deportivo",
+            cost: 42000,
+            margin: 75,
+            price: 78900,
+            promoPrice: 72900,
+            tracksStock: true,
+            sizeVariants: sizes({ 39: 1, 40: 2, 41: 2, 42: 1, 43: 0, 44: 1 }),
+            published: true,
+            catalogDescription: "Zapatilla liviana con suela confortable para uso diario.",
+            images: [svgImage("Runner 90", "#e9ecef", "#6b7280")],
+            createdAt: `${daysAgo(5)}T10:00:00.000Z`,
+          },
+          {
+            id: "seed-product-short-azul",
+            code: "S",
+            description: "Short Training",
+            color: "Azul",
+            unit: "Unidad",
+            category: "Shorts",
+            subcategory: "Deportivo",
+            cost: 11800,
+            margin: 85,
+            price: 22900,
+            promoPrice: 0,
+            tracksStock: true,
+            sizeVariants: sizes({ S: 3, M: 2, L: 2, XL: 0, XXL: 1 }),
+            published: true,
+            catalogDescription: "Short deportivo de secado rapido con cintura elastica.",
+            images: [svgImage("Short Training", "#dbeafe", "#1d4ed8")],
+            createdAt: `${daysAgo(3)}T10:00:00.000Z`,
+          },
+          {
+            id: "seed-product-gorra-roja",
+            code: "G",
+            description: "Gorra Classic",
+            color: "Rojo",
+            unit: "Unidad",
+            category: "Accesorios",
+            subcategory: "Gorras",
+            cost: 6500,
+            margin: 100,
+            price: 13900,
+            promoPrice: 0,
+            tracksStock: false,
+            stock: 0,
+            sizeVariants: [],
+            published: true,
+            catalogDescription: "Gorra regulable para completar cualquier outfit.",
+            images: [svgImage("Gorra Classic", "#fee2e2", "#b91c1c")],
+            createdAt: `${daysAgo(1)}T10:00:00.000Z`,
+          },
+        ].map((product) => ({
+          barcode: "",
+          wholesalePrice: 0,
+          isNew: false,
+          featured: false,
+          slug: "",
+          stock: product.tracksStock ? stockTotal(product.sizeVariants) : Number(product.stock || 0),
+          updatedAt: new Date().toISOString(),
+          ...product,
+        }));
+        const customers = [
+          { id: "seed-customer-sofia", name: "Sofia Martinez", dni: "42555111", phone: "3515551020", province: "Cordoba", notes: "Demo", initialDebt: 0, initialDebtPayments: [] },
+          { id: "seed-customer-diego", name: "Diego Alvarez", dni: "38123999", phone: "3515552040", province: "Cordoba", notes: "Demo con deuda", initialDebt: 18000, initialDebtPayments: [] },
+        ];
+        const sales = [
+          {
+            id: "seed-sale-0001",
+            localOrderNumber: 1,
+            date: today,
+            channel: "local",
+            source: "mostrador",
+            total: 49900,
+            paidAmount: 49900,
+            debtPayments: [],
+            syncStatus: "synced",
+            saleType: "minorista",
+            paymentMethod: "efectivo",
+            skipPaymentAdjustment: false,
+            manualTotalEnabled: false,
+            manualTotal: "",
+            items: [{ productId: "seed-product-hoodie-negro", code: "H", description: "Hoodie Essential", category: "Hoodies", subcategory: "Urbano", size: "M", quantity: 1, unitPrice: 49900, tracksStock: true }],
+            reference: "Sofia Martinez",
+            customerId: "seed-customer-sofia",
+            customerName: "Sofia Martinez",
+          },
+          {
+            id: "seed-sale-0002",
+            localOrderNumber: 2,
+            date: today,
+            channel: "local",
+            source: "mostrador",
+            total: 85000,
+            paidAmount: 60000,
+            debtPayments: [],
+            syncStatus: "synced",
+            saleType: "minorista",
+            paymentMethod: "transferencia",
+            skipPaymentAdjustment: false,
+            manualTotalEnabled: true,
+            manualTotal: 85000,
+            items: [
+              { productId: "seed-product-zapatilla-gris", code: "Z", description: "Zapatilla Runner 90", category: "Zapatillas", subcategory: "Deportivo", size: "41", quantity: 1, unitPrice: 78900, tracksStock: true },
+              { productId: "seed-product-gorra-roja", code: "G", description: "Gorra Classic", category: "Accesorios", subcategory: "Gorras", size: "", quantity: 1, unitPrice: 13900, tracksStock: false },
+            ],
+            reference: "Diego Alvarez",
+            customerId: "seed-customer-diego",
+            customerName: "Diego Alvarez",
+          },
+          {
+            id: "seed-sale-0003",
+            localOrderNumber: 3,
+            date: daysAgo(2),
+            channel: "local",
+            source: "mostrador",
+            total: 40800,
+            paidAmount: 40800,
+            debtPayments: [],
+            syncStatus: "synced",
+            saleType: "minorista",
+            paymentMethod: "qr",
+            skipPaymentAdjustment: false,
+            manualTotalEnabled: true,
+            manualTotal: 40800,
+            items: [
+              { productId: "seed-product-remera-blanca", code: "R", description: "Remera Box Fit", category: "Remeras", subcategory: "Urbano", size: "L", quantity: 1, unitPrice: 18900, tracksStock: true },
+              { productId: "seed-product-short-azul", code: "S", description: "Short Training", category: "Shorts", subcategory: "Deportivo", size: "M", quantity: 1, unitPrice: 22900, tracksStock: true },
+            ],
+            reference: "Venta mostrador",
+            customerId: "",
+            customerName: "",
+          },
+        ];
+        const expenses = [
+          { id: "seed-expense-alquiler", date: `${currentMonth}-01`, concept: "Alquiler local", category: "Alquiler", kind: "fijo", area: "local", amount: 180000 },
+          { id: "seed-expense-luz", date: daysAgo(4), concept: "Factura de luz", category: "Servicios", kind: "variable", area: "local", amount: 32500 },
+          { id: "seed-expense-instagram", date: daysAgo(3), concept: "Publicidad Instagram", category: "Marketing", kind: "variable", area: "local", amount: 22000 },
+        ];
+        const purchases = [
+          { id: "seed-purchase-mercaderia", date: daysAgo(6), supplier: "Reposicion proveedor demo", category: "CompraMercaderia", behavior: "variable", area: "local", amount: 260000, notes: "Compra de mercaderia demo" },
+        ];
+        const stockHistory = products.filter((product) => product.tracksStock).map((product) => ({
+          id: `seed-stock-${product.id}`,
+          date: daysAgo(8),
+          productId: product.id,
+          productCode: product.code,
+          productName: product.description,
+          type: "ajuste",
+          quantity: product.stock,
+          stockAfter: product.stock,
+          note: "Stock demo inicial",
+        }));
+        const activityLog = [
+          { id: "seed-activity-demo", at: new Date().toISOString(), user: "Demo", type: "settings", action: "Cargo datos demo", detail: "Productos, ventas, gastos y catalogo publicados" },
+        ];
+        const base = JSON.parse(localStorage.getItem(STORE_KEY) || "{}");
+        const removeSeed = (list) => Array.isArray(list) ? list.filter((item) => !String(item.id || "").startsWith("seed-")) : [];
+        const next = {
+          ...base,
+          activeView: "dashboard",
+          selectedMonth: currentMonth,
+          products: [...removeSeed(base.products), ...products],
+          customers: [...removeSeed(base.customers), ...customers],
+          sales: [...removeSeed(base.sales), ...sales],
+          expenses: [...removeSeed(base.expenses), ...expenses],
+          purchases: [...removeSeed(base.purchases), ...purchases],
+          stockHistory: [...removeSeed(base.stockHistory), ...stockHistory],
+          activityLog: [...removeSeed(base.activityLog), ...activityLog],
+          catalogSettings: {
+            ...(base.catalogSettings || {}),
+            businessName: "BlackShoes",
+            whatsappNumber: "",
+            defaultWhatsappMessage: "Hola {businessName}, quiero consultar por este producto:",
+            sizeAvailabilityMode: "show-unavailable",
+            outOfStockProductMode: "show",
+          },
+          productFilters: { query: "", sort: "alphaAsc", category: "all", subcategory: "all", stock: "all", published: "all" },
+          expensesPage: 1,
+          productPage: 1,
+          customerPage: 1,
+          salesHistoryPage: 1,
+          localSyncPending: true,
+        };
+        localStorage.setItem(STORE_KEY, JSON.stringify(next));
+        window.location.replace("./index.html?v=demo-data-loaded");
+      })();
+    </script>
+  </body>
+</html>
