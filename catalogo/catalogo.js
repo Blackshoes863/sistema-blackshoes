@@ -53,6 +53,10 @@ function productSlug(product) {
   return product.slug || slugify(`${product.code || ""}-${product.name || product.description || ""}-${product.color || ""}`);
 }
 
+function productPublicUrl(product) {
+  return `${window.location.origin}/catalogo/producto.html?slug=${encodeURIComponent(productSlug(product))}`;
+}
+
 function normalizeImages(row) {
   const value = row.images || row.imageUrls || row.image_urls || row.photos || row.photo_urls || [];
   if (Array.isArray(value)) {
@@ -232,6 +236,7 @@ function whatsappHref(product, size = "") {
     product.color ? `Color: ${product.color}` : "",
     size ? `Talle: ${size}` : "",
     `Precio: ${currency.format(effectivePrice(product))}`,
+    `Link: ${productPublicUrl(product)}`,
   ].filter(Boolean).join("\n");
   const phone = BLACKSHOES_BUSINESS.whatsappNumber.replace(/\D/g, "");
   return `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
@@ -363,6 +368,7 @@ function renderProductDetail(selectedSize = "") {
         </div>
         <small>${escapeHtml(product.category)}</small>
         <h1>${escapeHtml(product.name)}</h1>
+        ${product.code ? `<span class="product-code">Código interno: ${escapeHtml(product.code)}</span>` : ""}
         <p>${escapeHtml(product.description)}</p>
         ${priceBlock(product)}
         ${colorOptions}

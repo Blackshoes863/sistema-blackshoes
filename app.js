@@ -1189,7 +1189,9 @@ async function loadCloudProductCatalog() {
     if (category) categoryRows.push(cloudCategoryEntry(category, subcategory));
   });
   state.customProductCategories = normalizeCustomProductCategories(categoryRows);
-  state.products = (products || []).map(normalizeCloudProduct);
+  state.products = (products || [])
+    .filter((product) => product.sku !== "MANUAL_INTERNAL")
+    .map(normalizeCloudProduct);
   persistStateLocalOnly();
   return true;
 }
@@ -1510,7 +1512,29 @@ async function loadCloudOperationalData() {
   return true;
 }
 
+async function loadCloudBusinessSettings() {
+  if (!cloudEnabledWithSession()) return false;
+  const { data, error } = await supabaseClient
+    .from("business_settings")
+    .select("business_name, whatsapp_number, default_whatsapp_message, size_availability_mode, out_of_stock_product_mode")
+    .eq("id", "main")
+    .maybeSingle();
+  if (error) throw new Error(`configuración: ${error.message}`);
+  if (!data) return false;
+  state.catalogSettings = catalogSettings({
+    catalogSettings: {
+      businessName: data.business_name,
+      whatsappNumber: data.whatsapp_number,
+      defaultWhatsappMessage: data.default_whatsapp_message,
+      sizeAvailabilityMode: data.size_availability_mode,
+      outOfStockProductMode: data.out_of_stock_product_mode,
+    },
+  });
+  return true;
+}
+
 async function loadCloudData() {
+  await loadCloudBusinessSettings();
   await loadCloudProductCatalog();
   await loadCloudOperationalData();
   persistStateLocalOnly();
@@ -1570,8 +1594,34 @@ function cloudSaleItemsFromCart(cart) {
   });
 }
 
+async function ensureCloudManualProduct() {
+  if (!cloudEnabledWithSession()) throw new Error("Ingresá con tu usuario BlackShoes para usar ventas manuales.");
+  const { data, error } = await supabaseClient.rpc("ensure_manual_product");
+  if (error) throw new Error(`crear producto manual: ${error.message}`);
+  return data;
+}
+
+async function cloudSaleItemsFromCartAsync(cart) {
+  const manualProductId = (cart.items || []).some((item) => item.manual || !item.productId)
+    ? await ensureCloudManualProduct()
+    : null;
+  return (cart.items || []).map((item) => {
+    if (item.manual || !item.productId) {
+      return {
+        product_id: manualProductId,
+        variant_id: null,
+        quantity: Number(item.quantity || 1),
+        unit_price: Number(item.unitPrice || 0),
+        unit_cost: Number(item.unitCost || 0),
+      };
+    }
+    return cloudSaleItemsFromCart({ items: [item] })[0];
+  });
+}
+
 async function saveCloudLocalSale(cart, customer) {
   if (!cloudEnabledWithSession()) throw new Error("Ingresá con tu usuario BlackShoes para registrar ventas.");
+  const items = await cloudSaleItemsFromCartAsync(cart);
   const { data, error } = await supabaseClient.rpc("create_sale", {
     p_operation_id: cloudOperationId(),
     p_customer_id: customer?.id && isUuid(customer.id) ? customer.id : null,
@@ -1579,7 +1629,7 @@ async function saveCloudLocalSale(cart, customer) {
     p_payment_method: cart.paymentMethod || "",
     p_manual_total: cart.manualTotalEnabled ? cartTotal(cart) : null,
     p_notes: cart.reference || "",
-    p_items: cloudSaleItemsFromCart(cart),
+    p_items: items,
   });
   if (error) throw new Error(`registrar venta: ${error.message}`);
   return data;
@@ -1654,6 +1704,43 @@ async function saveCloudStockEntry(entry) {
     category: "CompraMercaderia",
     amount: Math.round(unitCost * quantity),
   });
+}
+
+async function archiveCloudRecord(kind, id) {
+  if (!cloudEnabledWithSession() || !isUuid(id)) return false;
+  const functionsByKind = {
+    sale: "cancel_sale",
+    customer: "archive_customer",
+    expense: "archive_expense",
+    product: "archive_product",
+  };
+  const fn = functionsByKind[kind];
+  if (!fn) return false;
+  const argNames = {
+    sale: "p_sale_id",
+    customer: "p_customer_id",
+    expense: "p_expense_id",
+    product: "p_product_id",
+  };
+  const { error } = await supabaseClient.rpc(fn, { [argNames[kind]]: id });
+  if (error) throw new Error(error.message);
+  return true;
+}
+
+async function saveCloudCatalogSettings(settings) {
+  if (!cloudEnabledWithSession()) throw new Error("Ingresá con tu usuario BlackShoes para guardar catálogo.");
+  const { error } = await supabaseClient
+    .from("business_settings")
+    .update({
+      business_name: settings.businessName,
+      whatsapp_number: settings.whatsappNumber,
+      default_whatsapp_message: settings.defaultWhatsappMessage,
+      size_availability_mode: settings.sizeAvailabilityMode,
+      out_of_stock_product_mode: settings.outOfStockProductMode,
+      updated_by: supabaseSession.user.id,
+    })
+    .eq("id", "main");
+  if (error) throw new Error(`guardar configuración: ${error.message}`);
 }
 
 function catalogProductUrl(product) {
@@ -6198,7 +6285,7 @@ function cancelCart(cartId) {
   render();
 }
 
-function deleteSale(saleId, options = {}) {
+async function deleteSale(saleId, options = {}) {
   const sale = state.sales.find((item) => item.id === saleId);
   if (!sale) return false;
   if (!options.skipConfirm) {
@@ -6210,6 +6297,26 @@ function deleteSale(saleId, options = {}) {
       onConfirm: () => deleteSale(saleId, { ...options, skipConfirm: true }),
     });
     return false;
+  }
+  if (CLOUD_DATA_ENABLED && isUuid(saleId)) {
+    try {
+      if (!cloudEnabledWithSession()) {
+        showAuthError("Ingresá con tu usuario BlackShoes para anular ventas en Supabase.");
+        renderAuthState("Ingresá para guardar en Supabase.");
+        return false;
+      }
+      await archiveCloudRecord("sale", saleId);
+      if (!options.skipLog) logActivity("sale", "Anulo venta", `${saleOrder(sale)} - ${money(sale.total)}`);
+      await loadCloudData();
+      saveState();
+      if (!options.skipRender) render();
+      showActionToast("Venta anulada en Supabase.");
+      return true;
+    } catch (error) {
+      console.warn("Cloud sale cancel failed", error);
+      alert(`No pude anular la venta en Supabase: ${error.message || "error desconocido"}`);
+      return false;
+    }
   }
   (sale.items || []).forEach((item) => {
     const product = state.products.find((entry) => entry.id === item.productId);
@@ -6714,7 +6821,27 @@ function deleteExpenseMovement(key) {
     message: `Se eliminará ${entry.concept} por ${money(entry.amount)}.`,
     confirmText: "Eliminar",
     danger: true,
-    onConfirm: () => {
+    onConfirm: async () => {
+      if (CLOUD_DATA_ENABLED && isUuid(id)) {
+        try {
+          if (!cloudEnabledWithSession()) {
+            showAuthError("Ingresá con tu usuario BlackShoes para archivar gastos en Supabase.");
+            renderAuthState("Ingresá para guardar en Supabase.");
+            return;
+          }
+          await archiveCloudRecord("expense", id);
+          logActivity("expense", "Archivo gasto", `${entry.concept} - ${money(entry.amount)}`);
+          await loadCloudOperationalData();
+          saveState();
+          render();
+          showActionToast("Gasto archivado en Supabase.");
+          return;
+        } catch (error) {
+          console.warn("Cloud expense archive failed", error);
+          alert(`No pude archivar el gasto en Supabase: ${error.message || "error desconocido"}`);
+          return;
+        }
+      }
       if (source === "expense") {
         rememberDeletedRecord("expenses", id);
         state.expenses = state.expenses.filter((item) => item.id !== id);
@@ -7969,7 +8096,28 @@ function deleteCustomer(customerId) {
     message: `Se eliminará la ficha de ${customer.name}. Las ventas quedan guardadas en el historial.`,
     confirmText: "Eliminar",
     danger: true,
-    onConfirm: () => {
+    onConfirm: async () => {
+      if (CLOUD_DATA_ENABLED && isUuid(customerId)) {
+        try {
+          if (!cloudEnabledWithSession()) {
+            showAuthError("Ingresá con tu usuario BlackShoes para archivar clientes en Supabase.");
+            renderAuthState("Ingresá para guardar en Supabase.");
+            return;
+          }
+          await archiveCloudRecord("customer", customerId);
+          logActivity("customer", "Archivo cliente", customer.name);
+          await loadCloudOperationalData();
+          clearCustomerForm();
+          saveState();
+          render();
+          showActionToast("Cliente archivado en Supabase.");
+          return;
+        } catch (error) {
+          console.warn("Cloud customer archive failed", error);
+          alert(`No pude archivar el cliente en Supabase: ${error.message || "error desconocido"}`);
+          return;
+        }
+      }
       rememberDeletedRecord("customers", customerId);
       state.customers = state.customers.filter((item) => item.id !== customerId);
       state.sales.forEach((sale) => {
@@ -9115,9 +9263,9 @@ function saveBusinessSettingsFromForm(form) {
   showActionToast("Porcentajes guardados.");
 }
 
-function saveCatalogSettingsFromForm(form) {
+async function saveCatalogSettingsFromForm(form) {
   const data = Object.fromEntries(new FormData(form));
-  state.catalogSettings = catalogSettings({
+  const nextSettings = catalogSettings({
     catalogSettings: {
       businessName: data.businessName,
       whatsappNumber: data.whatsappNumber,
@@ -9126,6 +9274,21 @@ function saveCatalogSettingsFromForm(form) {
       outOfStockProductMode: data.outOfStockProductMode,
     },
   });
+  try {
+    if (CLOUD_DATA_ENABLED) {
+      if (!cloudEnabledWithSession()) {
+        showAuthError("Ingresá con tu usuario BlackShoes para guardar catálogo en Supabase.");
+        renderAuthState("Ingresá para guardar en Supabase.");
+        return;
+      }
+      await saveCloudCatalogSettings(nextSettings);
+    }
+  } catch (error) {
+    console.warn("Cloud catalog settings save failed", error);
+    alert(`No pude guardar la configuración en Supabase: ${error.message || "error desconocido"}`);
+    return;
+  }
+  state.catalogSettings = nextSettings;
   logActivity("settings", "Guardo catalogo", "Configuracion publica de BlackShoes");
   saveState();
   render();
@@ -9255,6 +9418,10 @@ function openSaleEditModal(saleId) {
   const modal = document.getElementById("saleEditModal");
   const form = document.getElementById("saleEditForm");
   if (!sale || !modal || !form) return;
+  if (CLOUD_DATA_ENABLED && isUuid(sale.id)) {
+    alert("Para corregir una venta guardada en Supabase, anulala y cargala nuevamente. Así stock y pagos quedan correctos.");
+    return;
+  }
   const linkedOrder = sale.channel === "online" ? findOnlineOrderForSale(sale) : null;
   form.elements.saleId.value = sale.id;
   form.elements.onlineOrderId.value = linkedOrder?.id || sale.onlineOrderId || "";
@@ -9342,6 +9509,10 @@ function saveSaleEdit(form) {
   const data = Object.fromEntries(new FormData(form));
   const sale = state.sales.find((item) => item.id === data.saleId);
   if (!sale) return;
+  if (CLOUD_DATA_ENABLED && isUuid(sale.id)) {
+    alert("Para corregir una venta guardada en Supabase, anulala y cargala nuevamente.");
+    return;
+  }
   const now = new Date().toISOString();
   const date = normalizeDateInput(data.date) || sale.date || todayIso();
   let total = Math.max(0, Number(data.total || 0));
@@ -10553,7 +10724,27 @@ document.addEventListener("click", (event) => {
         message: `Se eliminara el producto ${product.code} - ${product.description}.`,
         confirmText: "Eliminar",
         danger: true,
-        onConfirm: () => {
+        onConfirm: async () => {
+          if (CLOUD_DATA_ENABLED && isUuid(product.id)) {
+            try {
+              if (!cloudEnabledWithSession()) {
+                showAuthError("Ingresá con tu usuario BlackShoes para archivar productos en Supabase.");
+                renderAuthState("Ingresá para guardar en Supabase.");
+                return;
+              }
+              await archiveCloudRecord("product", product.id);
+              logActivity("product", "Archivo producto", `${product.code} - ${product.description}`);
+              await loadCloudData();
+              saveState();
+              render();
+              showActionToast("Producto archivado en Supabase.");
+              return;
+            } catch (error) {
+              console.warn("Cloud product archive failed", error);
+              alert(`No pude archivar el producto en Supabase: ${error.message || "error desconocido"}`);
+              return;
+            }
+          }
           rememberDeletedRecord("products", product.id);
           state.products = state.products.filter((item) => item.id !== product.id);
           logActivity("product", "Elimino producto", `${product.code} - ${product.description}`);

@@ -368,6 +368,14 @@ button.size-chip {
   line-height: 1.5;
 }
 
+.product-code {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
 .product-control {
   display: grid;
   gap: 8px;
