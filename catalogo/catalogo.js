@@ -13,6 +13,7 @@ const BLACKSHOES_CATALOG_CONFIG = {
   localStoreKey: "blackshoes-control-v1",
   sizeAvailabilityMode: BLACKSHOES_BUSINESS.sizeAvailabilityMode || "show-unavailable",
   outOfStockProductMode: BLACKSHOES_BUSINESS.outOfStockProductMode || "show",
+  ...(window.BLACKSHOES_CATALOG_REMOTE_CONFIG || {}),
 };
 
 const currency = new Intl.NumberFormat("es-AR", {
