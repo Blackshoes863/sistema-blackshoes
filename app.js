@@ -440,6 +440,30 @@ const baseProductCategories = [
   "Zapatillas",
 ];
 
+const commonProductColors = [
+  "Negro",
+  "Blanco",
+  "Gris",
+  "Azul",
+  "Celeste",
+  "Rojo",
+  "Bordo",
+  "Rosa",
+  "Fucsia",
+  "Verde",
+  "Beige",
+  "Marron",
+  "Camel",
+  "Amarillo",
+  "Naranja",
+  "Violeta",
+  "Lila",
+  "Crema",
+  "Crudo",
+  "Jean",
+  "Multicolor",
+];
+
 const clothingSubcategories = ["Deportivo", "Urbano"];
 const baseProductSubcategories = {
   Accesorios: ["Bijouterie", "Gorras", "Lentes", "Medias"],
@@ -4780,6 +4804,27 @@ function productSearchOptions(products = state.products) {
   }).join("");
 }
 
+function productColorOptions(selectedColor = "") {
+  const selected = normalizeProductDescription(selectedColor || "");
+  const hasSelected = commonProductColors.some((color) => categoryKey(color) === categoryKey(selected));
+  return [
+    `<option value="">Color</option>`,
+    ...commonProductColors.map((color) => `<option value="${htmlAttr(color)}" ${categoryKey(color) === categoryKey(selected) ? "selected" : ""}>${htmlAttr(color)}</option>`),
+    `<option value="__custom" ${selected && !hasSelected ? "selected" : ""}>Otro color</option>`,
+  ].join("");
+}
+
+function syncProductCustomColor(selectedColor = "") {
+  const colorSelect = document.getElementById("productColor");
+  const customInput = document.getElementById("productCustomColor");
+  if (!colorSelect || !customInput) return;
+  const custom = colorSelect.value === "__custom";
+  customInput.classList.toggle("is-hidden", !custom);
+  customInput.required = custom;
+  if (custom && selectedColor) customInput.value = selectedColor;
+  if (!custom) customInput.value = "";
+}
+
 function productCategories() {
   const configured = normalizeCustomProductCategories(state.customProductCategories).filter((entry) => entry.active !== false);
   return [...new Set([
@@ -5316,11 +5361,12 @@ function openProductModal(productId = null) {
   document.getElementById("saveProductButton").textContent = product ? "Guardar Cambios" : "Guardar Producto";
   renderProductCategoryOptions(product?.category || "");
   renderProductSubcategoryOptions(product?.category || "", product?.subcategory || "");
+  form.color.innerHTML = productColorOptions(product?.color || "");
+  syncProductCustomColor(product?.color || "");
   productImageDraft = normalizeProductImageUrls(product?.imageUrls || []);
   productVariantDraft = normalizeProductSizeVariants(product?.sizeVariants || []);
   if (product) {
     form.description.value = product.description || "";
-    form.color.value = product.color || "";
     form.category.value = product.category || productCategories()[0];
     form.subcategory.value = product.subcategory || "";
     form.code.value = product.code || "";
@@ -11394,6 +11440,10 @@ document.addEventListener("change", async (event) => {
     }
     return;
   }
+  if (event.target.id === "productColor") {
+    syncProductCustomColor();
+    return;
+  }
   if (event.target.id === "productCategoryFilter") {
     state.productFilters.category = event.target.value;
     state.productFilters.subcategory = "all";
@@ -11689,6 +11739,7 @@ document.getElementById("productForm").addEventListener("submit", (event) => {
   const now = new Date().toISOString();
   const category = canonicalProductCategory(data.category);
   const code = isAccessoryCategory(category) ? accessoryPriceCode(data.price) : String(data.code || "").trim().toUpperCase();
+  const color = data.color === "__custom" ? data.customColor : data.color;
   if (!isAccessoryCategory(category) && state.products.some((product) => product.id !== editingId && String(product.code || "").toUpperCase() === code)) {
     alert("Ese Código ya existe. Elegí otro Código libre.");
     return;
@@ -11698,7 +11749,7 @@ document.getElementById("productForm").addEventListener("submit", (event) => {
     barcode: data.barcode || barcodeFromCode(code),
     description: normalizeProductDescription(data.description),
     catalogDescription: String(data.catalogDescription || "").trim(),
-    color: normalizeProductDescription(data.color || ""),
+    color: normalizeProductDescription(color || ""),
     category,
     subcategory: isAccessoryCategory(category) ? "" : String(data.subcategory || "").trim(),
     unit: "Unidad",
