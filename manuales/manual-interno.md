@@ -67,4 +67,4 @@ La configuracion tecnica esta en `app.js`:
 - `CLOUD_INITIAL_SALES_DAYS`
 - `CLOUD_INITIAL_EXPENSE_DAYS`
 
-Hoy queda en 90 dias para ventas y gastos iniciales. Si el sistema crece mucho, se puede bajar a 30 o 60 dias.
+Hoy queda en 90 dias para ventas y gastos iniciales. Desde Configuracion > Carga de Datos se puede cambiar a 30, 60, 90, 180, 365 dias o Todo.

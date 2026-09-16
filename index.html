@@ -707,6 +707,16 @@
           </section>
           <section class="panel">
             <div class="panel-head">
+              <h2>Carga de Datos</h2>
+            </div>
+            <form class="settings-grid" id="dataLoadSettingsForm">
+              <label><span>Ventas al ingresar</span><select name="cloudInitialSalesDays"><option value="30">30 días</option><option value="60">60 días</option><option value="90">90 días</option><option value="180">180 días</option><option value="365">1 año</option><option value="0">Todo</option></select></label>
+              <label><span>Gastos al ingresar</span><select name="cloudInitialExpenseDays"><option value="30">30 días</option><option value="60">60 días</option><option value="90">90 días</option><option value="180">180 días</option><option value="365">1 año</option><option value="0">Todo</option></select></label>
+              <button class="primary" type="submit">Guardar Carga</button>
+            </form>
+          </section>
+          <section class="panel">
+            <div class="panel-head">
               <h2>Gastos Fijos Precargados</h2>
               <button class="secondary" id="addFixedExpenseTemplateButton" type="button">+ Agregar</button>
             </div>
@@ -1521,10 +1531,10 @@
     <div class="action-toast" id="actionToast" role="status" aria-live="polite"></div>
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="app.js?v=245"></script>
+    <script src="app.js?v=246"></script>
     <script>
       if ("serviceWorker" in navigator && location.protocol !== "file:") {
-        navigator.serviceWorker.register("sw.js?v=257");
+        navigator.serviceWorker.register("sw.js?v=258");
       }
     </script>
   </body>

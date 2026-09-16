@@ -509,6 +509,8 @@ const defaultBusinessSettings = {
   pagoNubeCommissionRate: 0,
   onlineCostInsumos: 0,
   onlineCostAccesorios: 0,
+  cloudInitialSalesDays: 90,
+  cloudInitialExpenseDays: 90,
   promoDiscounts: {
     base: 0,
     off10: 0,
@@ -1474,6 +1476,15 @@ function cloudSinceTimestamp(days) {
   return date.toISOString();
 }
 
+function configuredCloudInitialDays(kind) {
+  const settings = businessSettings();
+  const fallback = kind === "expenses" ? CLOUD_INITIAL_EXPENSE_DAYS : CLOUD_INITIAL_SALES_DAYS;
+  const raw = kind === "expenses" ? settings.cloudInitialExpenseDays : settings.cloudInitialSalesDays;
+  const days = Number(raw ?? fallback);
+  if (!Number.isFinite(days) || days < 0) return fallback;
+  return Math.round(days);
+}
+
 function cloudModeCovers(currentMode, requestedMode) {
   return (CLOUD_OPERATIONAL_MODES[currentMode] || 0) >= (CLOUD_OPERATIONAL_MODES[requestedMode] || 0);
 }
@@ -1512,9 +1523,12 @@ async function loadCloudOperationalData({ mode = "initial", force = true } = {})
       .is("archived_at", null)
       .order("sold_at", { ascending: false });
 
-    const scopedSalesQuery = requestedMode === "full"
+    const salesDays = configuredCloudInitialDays("sales");
+    const expenseDays = configuredCloudInitialDays("expenses");
+
+    const scopedSalesQuery = requestedMode === "full" || salesDays === 0
       ? salesQuery
-      : salesQuery.or(`sold_at.gte.${cloudSinceTimestamp(CLOUD_INITIAL_SALES_DAYS)},payment_status.neq.paid`);
+      : salesQuery.or(`sold_at.gte.${cloudSinceTimestamp(salesDays)},payment_status.neq.paid`);
 
     const expensesQuery = supabaseClient
       .from("expenses")
@@ -1522,9 +1536,9 @@ async function loadCloudOperationalData({ mode = "initial", force = true } = {})
       .is("archived_at", null)
       .order("expense_at", { ascending: false });
 
-    const scopedExpensesQuery = requestedMode === "full"
+    const scopedExpensesQuery = requestedMode === "full" || expenseDays === 0
       ? expensesQuery
-      : expensesQuery.gte("expense_at", cloudSinceTimestamp(CLOUD_INITIAL_EXPENSE_DAYS));
+      : expensesQuery.gte("expense_at", cloudSinceTimestamp(expenseDays));
 
   const [{ data: customers, error: customersError }, { data: sales, error: salesError }, { data: expenses, error: expensesError }, { data: stock, error: stockError }, { data: initialPayments, error: paymentsError }] = await Promise.all([
     supabaseClient.from("customers").select("*").is("archived_at", null).order("created_at", { ascending: false }),
@@ -3423,11 +3437,18 @@ function paymentMethodOptionLabel(method, saleType = "minorista", skipPaymentAdj
 
 function businessSettings(target = typeof state === "undefined" ? null : state) {
   const settings = target?.businessSettings || {};
-  return {
+  const merged = {
     ...defaultBusinessSettings,
     ...settings,
     promoDiscounts: { ...defaultBusinessSettings.promoDiscounts, ...(settings.promoDiscounts || {}) },
   };
+  merged.cloudInitialSalesDays = [0, 30, 60, 90, 180, 365].includes(Number(merged.cloudInitialSalesDays))
+    ? Number(merged.cloudInitialSalesDays)
+    : defaultBusinessSettings.cloudInitialSalesDays;
+  merged.cloudInitialExpenseDays = [0, 30, 60, 90, 180, 365].includes(Number(merged.cloudInitialExpenseDays))
+    ? Number(merged.cloudInitialExpenseDays)
+    : defaultBusinessSettings.cloudInitialExpenseDays;
+  return merged;
 }
 
 function catalogSettings(target = typeof state === "undefined" ? null : state) {
@@ -9062,6 +9083,11 @@ function renderSettings() {
     catalogForm.elements.sizeAvailabilityMode.value = catalog.sizeAvailabilityMode;
     catalogForm.elements.outOfStockProductMode.value = catalog.outOfStockProductMode;
   }
+  const dataLoadForm = document.getElementById("dataLoadSettingsForm");
+  if (dataLoadForm) {
+    dataLoadForm.elements.cloudInitialSalesDays.value = String(settings.cloudInitialSalesDays);
+    dataLoadForm.elements.cloudInitialExpenseDays.value = String(settings.cloudInitialExpenseDays);
+  }
   renderFixedExpenseSettingsTable();
   renderProductCategorySettingsTable();
   renderUserPermissionsTable();
@@ -9332,6 +9358,28 @@ function saveBusinessSettingsFromForm(form) {
   saveState();
   render();
   showActionToast("Porcentajes guardados.");
+}
+
+async function saveDataLoadSettingsFromForm(form) {
+  const data = Object.fromEntries(new FormData(form));
+  state.businessSettings = {
+    ...businessSettings(),
+    cloudInitialSalesDays: Number(data.cloudInitialSalesDays ?? defaultBusinessSettings.cloudInitialSalesDays),
+    cloudInitialExpenseDays: Number(data.cloudInitialExpenseDays ?? defaultBusinessSettings.cloudInitialExpenseDays),
+  };
+  cloudOperationalMode = "none";
+  logActivity("settings", "Guardo carga de datos", `Ventas ${state.businessSettings.cloudInitialSalesDays || "todo"} dias - Gastos ${state.businessSettings.cloudInitialExpenseDays || "todo"} dias`);
+  saveState();
+  if (cloudEnabledWithSession()) {
+    try {
+      await loadCloudData({ mode: "initial", force: true });
+    } catch (error) {
+      console.warn("Cloud reload after data settings failed", error);
+      renderAuthState(`Guardado. No pude recargar ahora: ${error.message || "error de Supabase"}`);
+    }
+  }
+  render();
+  showActionToast("Carga de datos guardada.");
 }
 
 async function saveCatalogSettingsFromForm(form) {
@@ -11600,6 +11648,11 @@ document.getElementById("businessSettingsForm")?.addEventListener("submit", (eve
 document.getElementById("catalogSettingsForm")?.addEventListener("submit", (event) => {
   event.preventDefault();
   saveCatalogSettingsFromForm(event.target);
+});
+
+document.getElementById("dataLoadSettingsForm")?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  saveDataLoadSettingsFromForm(event.target);
 });
 
 document.getElementById("saleEditForm")?.addEventListener("submit", (event) => {
