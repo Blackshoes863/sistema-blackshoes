@@ -3072,6 +3072,12 @@ async function syncWithSupabase({ preferRemote = false } = {}) {
     }
     try {
       await loadCloudData({ mode: "full", force: true });
+      state.localSyncPending = false;
+      state.systemMigrationPending = false;
+      clearPendingRemoteChanges(state);
+      state.sales = (state.sales || []).map((sale) => ({ ...sale, syncStatus: "synced" }));
+      businessStateDirty = false;
+      persistStateLocalOnly();
       render();
       renderAuthState("Datos actualizados desde Supabase.");
       return true;
