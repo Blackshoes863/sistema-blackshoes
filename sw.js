@@ -1,4 +1,4 @@
-const CACHE_NAME = "blackshoes-control-v59";
+const CACHE_NAME = "blackshoes-control-v60";
 const ASSETS = [
   "./",
   "./index.html",
@@ -10,13 +10,14 @@ const ASSETS = [
   "./catalogo/catalogo.js?v=11",
   "./styles.css?v=92",
   "./app.js?v=247",
-  "./manifest.json?v=5",
+  "./manifest.json?v=6",
   "./assets/blackshoes-header-logo.png",
   "./assets/blackshoes-logo.png",
-  "./assets/blackshoes-icon-192.png",
-  "./assets/blackshoes-icon-512.png",
-  "./assets/blackshoes-apple-touch.png",
-  "./assets/blackshoes-favicon-32.png",
+  "./assets/blackshoes-icon-192.png?v=2",
+  "./assets/blackshoes-icon-512.png?v=2",
+  "./assets/blackshoes-apple-touch.png?v=2",
+  "./assets/blackshoes-favicon-32.png?v=2",
+  "./assets/blackshoes-social.png?v=2",
 ];
 
 self.addEventListener("install", (event) => {
