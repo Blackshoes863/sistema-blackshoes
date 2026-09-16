@@ -194,8 +194,8 @@ const CUSTOMER_INFO_PAGE_SIZE = 10;
 const MONTHLY_CLOSURES_PAGE_SIZE = 15;
 const REPORT_PREVIEW_LIMIT = 7;
 const REPORT_PRODUCT_EXPAND_LIMIT = 30;
-const CLOUD_INITIAL_SALES_DAYS = 90;
-const CLOUD_INITIAL_EXPENSE_DAYS = 90;
+const CLOUD_INITIAL_SALES_DAYS = 60;
+const CLOUD_INITIAL_EXPENSE_DAYS = 60;
 const CLOUD_OPERATIONAL_MODES = {
   none: 0,
   initial: 1,
@@ -509,8 +509,8 @@ const defaultBusinessSettings = {
   pagoNubeCommissionRate: 0,
   onlineCostInsumos: 0,
   onlineCostAccesorios: 0,
-  cloudInitialSalesDays: 90,
-  cloudInitialExpenseDays: 90,
+  cloudInitialSalesDays: 60,
+  cloudInitialExpenseDays: 60,
   promoDiscounts: {
     base: 0,
     off10: 0,
