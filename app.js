@@ -194,6 +194,13 @@ const CUSTOMER_INFO_PAGE_SIZE = 10;
 const MONTHLY_CLOSURES_PAGE_SIZE = 15;
 const REPORT_PREVIEW_LIMIT = 7;
 const REPORT_PRODUCT_EXPAND_LIMIT = 30;
+const CLOUD_INITIAL_SALES_DAYS = 90;
+const CLOUD_INITIAL_EXPENSE_DAYS = 90;
+const CLOUD_OPERATIONAL_MODES = {
+  none: 0,
+  initial: 1,
+  full: 2,
+};
 
 let pendingConfirmAction = null;
 let pendingCancelAction = null;
@@ -633,6 +640,8 @@ let autoRemoteRefreshInProgress = false;
 let lastAutoRemoteRefreshAt = 0;
 let lastDirtyComparisonState = cloneStateForDirtyComparison(state);
 let localChangeRevision = 0;
+let cloudOperationalMode = "none";
+let cloudOperationalLoadPromise = null;
 
 function sampleTodayLocalSales() {
   return [];
@@ -1458,16 +1467,69 @@ function normalizeCloudStockMovement(row = {}) {
   };
 }
 
-async function loadCloudOperationalData() {
+function cloudSinceTimestamp(days) {
+  const date = new Date();
+  date.setDate(date.getDate() - Math.max(1, Number(days || 1)));
+  date.setHours(0, 0, 0, 0);
+  return date.toISOString();
+}
+
+function cloudModeCovers(currentMode, requestedMode) {
+  return (CLOUD_OPERATIONAL_MODES[currentMode] || 0) >= (CLOUD_OPERATIONAL_MODES[requestedMode] || 0);
+}
+
+function cloudModeForView(viewId) {
+  return ["salesHistory", "customers", "expenses", "reports"].includes(viewId) ? "full" : "initial";
+}
+
+async function ensureCloudDataForView(viewId) {
   if (!cloudEnabledWithSession()) return false;
-  const [{ data: customers, error: customersError }, { data: sales, error: salesError }, { data: expenses, error: expensesError }, { data: stock, error: stockError }, { data: initialPayments, error: paymentsError }] = await Promise.all([
-    supabaseClient.from("customers").select("*").is("archived_at", null).order("created_at", { ascending: false }),
-    supabaseClient
+  const mode = cloudModeForView(viewId);
+  if (cloudModeCovers(cloudOperationalMode, mode) || cloudOperationalLoadPromise) return false;
+  try {
+    renderAuthState(mode === "full" ? "Cargando historial completo..." : "Actualizando datos...");
+    await loadCloudOperationalData({ mode, force: false });
+    render();
+    renderAuthState(mode === "full" ? "Historial completo cargado." : "Datos actualizados.");
+    return true;
+  } catch (error) {
+    console.warn("Cloud lazy load failed", error);
+    renderAuthState(`No pude cargar esta seccion: ${error.message || "error de Supabase"}`);
+    return false;
+  }
+}
+
+async function loadCloudOperationalData({ mode = "initial", force = true } = {}) {
+  if (!cloudEnabledWithSession()) return false;
+  const requestedMode = cloudModeCovers(cloudOperationalMode, "full") && mode === "initial" ? "full" : mode;
+  if (!force && cloudModeCovers(cloudOperationalMode, requestedMode)) return true;
+  if (cloudOperationalLoadPromise) return cloudOperationalLoadPromise;
+
+  cloudOperationalLoadPromise = (async () => {
+    const salesQuery = supabaseClient
       .from("sales")
       .select("*,sale_items(*),payments(*)")
       .is("archived_at", null)
-      .order("sold_at", { ascending: false }),
-    supabaseClient.from("expenses").select("*").is("archived_at", null).order("expense_at", { ascending: false }),
+      .order("sold_at", { ascending: false });
+
+    const scopedSalesQuery = requestedMode === "full"
+      ? salesQuery
+      : salesQuery.or(`sold_at.gte.${cloudSinceTimestamp(CLOUD_INITIAL_SALES_DAYS)},payment_status.neq.paid`);
+
+    const expensesQuery = supabaseClient
+      .from("expenses")
+      .select("*")
+      .is("archived_at", null)
+      .order("expense_at", { ascending: false });
+
+    const scopedExpensesQuery = requestedMode === "full"
+      ? expensesQuery
+      : expensesQuery.gte("expense_at", cloudSinceTimestamp(CLOUD_INITIAL_EXPENSE_DAYS));
+
+  const [{ data: customers, error: customersError }, { data: sales, error: salesError }, { data: expenses, error: expensesError }, { data: stock, error: stockError }, { data: initialPayments, error: paymentsError }] = await Promise.all([
+    supabaseClient.from("customers").select("*").is("archived_at", null).order("created_at", { ascending: false }),
+    scopedSalesQuery,
+    scopedExpensesQuery,
     supabaseClient.from("stock_movements").select("*").order("created_at", { ascending: false }).limit(STOCK_HISTORY_LIMIT),
     supabaseClient.from("payments").select("*").is("sale_id", null).order("paid_at", { ascending: false }),
   ]);
@@ -1508,8 +1570,16 @@ async function loadCloudOperationalData() {
       stockEntryId: expense.operation_id || "",
     }));
   state.stockHistory = (stock || []).map(normalizeCloudStockMovement).reverse();
+  cloudOperationalMode = requestedMode;
   persistStateLocalOnly();
   return true;
+  })();
+
+  try {
+    return await cloudOperationalLoadPromise;
+  } finally {
+    cloudOperationalLoadPromise = null;
+  }
 }
 
 async function loadCloudBusinessSettings() {
@@ -1533,10 +1603,10 @@ async function loadCloudBusinessSettings() {
   return true;
 }
 
-async function loadCloudData() {
+async function loadCloudData({ mode = "initial", force = false } = {}) {
   await loadCloudBusinessSettings();
   await loadCloudProductCatalog();
-  await loadCloudOperationalData();
+  await loadCloudOperationalData({ mode, force });
   persistStateLocalOnly();
   return true;
 }
@@ -2949,7 +3019,7 @@ async function syncWithSupabase({ preferRemote = false } = {}) {
       return false;
     }
     try {
-      await loadCloudData();
+      await loadCloudData({ mode: "full", force: true });
       render();
       renderAuthState("Datos actualizados desde Supabase.");
       return true;
@@ -3070,7 +3140,7 @@ async function completeSupabaseLogin({ preferRemote = true, openDashboard = fals
     await ensureSupabaseProfile();
     if (REMOTE_SYNC_DISABLED && CLOUD_DATA_ENABLED) {
       remoteHydrationDone = true;
-      await loadCloudData();
+      await loadCloudData({ mode: "initial", force: false });
       await refreshSupabaseProfiles({ renderAfter: false });
       render();
       renderAuthState("Supabase conectado.");
@@ -3189,6 +3259,7 @@ function setView(viewId) {
   if (localSummary) localSummary.hidden = nextView !== "pos" || !canViewFeature("hideLocalMonthlyTotal");
   if (onlineSummary) onlineSummary.hidden = !MODULE_FLAGS.onlineSales || nextView !== "online";
   render();
+  ensureCloudDataForView(nextView);
   autoDownloadRemoteState({ force: true });
 }
 
