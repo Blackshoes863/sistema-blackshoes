@@ -56,11 +56,21 @@ const permissionFeatureOptions = [
   { id: "hideLocalMonthlyTotal", label: "Ocultar total local del mes" },
 ];
 const allPermissionFeatureIds = permissionFeatureOptions.map((feature) => feature.id);
+const userRoleLabels = {
+  admin: "Admin",
+  dueno: "Dueño",
+  local: "Local",
+  web: "Web",
+  taller: "Taller",
+  consulta: "Consulta",
+};
 const defaultTabsByRole = {
   admin: allPermissionTabIds,
+  dueno: allPermissionTabIds,
   local: ["dashboard", "catalog", "customers", "pos", "salesHistory"],
   web: ["dashboard", "catalog", "customers", "salesHistory"],
   taller: ["dashboard", "catalog", "customers"],
+  consulta: ["dashboard", "catalog", "customers", "salesHistory", "reports"],
 };
 
 const localIsoDate = (date = new Date()) => {
@@ -4076,8 +4086,12 @@ function isAdminProfile(profile = supabaseProfile) {
   return profile?.role === "admin";
 }
 
+function isFullAccessRole(role) {
+  return role === "admin" || role === "dueno";
+}
+
 function tabsForProfile(profile = supabaseProfile) {
-  if (isAdminProfile(profile)) return allPermissionTabIds;
+  if (isAdminProfile(profile) || isFullAccessRole(profile?.role)) return allPermissionTabIds;
   const emailKey = profileEmailKey(profile);
   const configured = state.userTabPermissions?.[emailKey]?.tabs;
   return normalizeTabList(configured, profile?.role || "local");
@@ -4091,7 +4105,7 @@ function canViewTab(viewId) {
 }
 
 function canViewFeature(featureId, profile = supabaseProfile) {
-  if (!allPermissionFeatureIds.includes(featureId) || isAdminProfile(profile)) return true;
+  if (!allPermissionFeatureIds.includes(featureId) || isAdminProfile(profile) || isFullAccessRole(profile?.role)) return true;
   if (!supabaseSession || !profile) return true;
   const emailKey = profileEmailKey(profile);
   const hiddenFeatures = state.userTabPermissions?.[emailKey]?.hiddenFeatures || [];
@@ -9130,8 +9144,8 @@ function renderSettings() {
 }
 
 function userRoleOptions(selected = "local") {
-  return ["admin", "local", "web", "taller"]
-    .map((role) => `<option value="${role}" ${role === selected ? "selected" : ""}>${role}</option>`)
+  return ["admin", "dueno", "local", "web", "taller", "consulta"]
+    .map((role) => `<option value="${role}" ${role === selected ? "selected" : ""}>${userRoleLabels[role] || role}</option>`)
     .join("");
 }
 
@@ -9152,12 +9166,12 @@ function renderUserPermissionsTable() {
     const email = profileDisplayName(profile);
     const emailKey = profileEmailKey(profile);
     const role = profile.role || "local";
-    const admin = role === "admin";
+    const fullAccess = isFullAccessRole(role);
     const active = profile.active !== false;
     const isCurrentUser = profile.id === supabaseProfile?.id;
     const lastSeen = state.userLastSeen?.[emailKey]?.at;
-    const selectedTabs = admin ? allPermissionTabIds : normalizeTabList(state.userTabPermissions?.[emailKey]?.tabs, role);
-    const hiddenFeatures = state.userTabPermissions?.[emailKey]?.hiddenFeatures || [];
+    const selectedTabs = fullAccess ? allPermissionTabIds : normalizeTabList(state.userTabPermissions?.[emailKey]?.tabs, role);
+    const hiddenFeatures = fullAccess ? [] : state.userTabPermissions?.[emailKey]?.hiddenFeatures || [];
     return `
       <tr data-user-permission-row="${htmlAttr(emailKey)}" data-user-id="${htmlAttr(profile.id || "")}">
         <td class="permission-user-cell">
@@ -9180,13 +9194,13 @@ function renderUserPermissionsTable() {
           <div class="permission-tab-list">
             ${permissionTabs.map((tab) => `
               <label class="permission-tab-check">
-                <input type="checkbox" data-user-tab="${htmlAttr(tab.id)}" ${selectedTabs.includes(tab.id) ? "checked" : ""} ${admin ? "disabled" : ""}>
+                <input type="checkbox" data-user-tab="${htmlAttr(tab.id)}" ${selectedTabs.includes(tab.id) ? "checked" : ""} ${fullAccess ? "disabled" : ""}>
                 <span>${htmlAttr(tab.label)}</span>
               </label>
             `).join("")}
             ${permissionFeatureOptions.map((feature) => `
               <label class="permission-tab-check permission-feature-check">
-                <input type="checkbox" data-user-hidden-feature="${htmlAttr(feature.id)}" ${hiddenFeatures.includes(feature.id) ? "checked" : ""} ${admin ? "disabled" : ""}>
+                <input type="checkbox" data-user-hidden-feature="${htmlAttr(feature.id)}" ${hiddenFeatures.includes(feature.id) ? "checked" : ""} ${fullAccess ? "disabled" : ""}>
                 <span>${htmlAttr(feature.label)}</span>
               </label>
             `).join("")}
@@ -9212,7 +9226,7 @@ async function saveUserPermissionsFromSettings() {
     const active = activeInput ? activeInput.checked : profile?.active !== false;
     const tabs = [...row.querySelectorAll("[data-user-tab]:checked")].map((input) => input.dataset.userTab);
     const hiddenFeatures = [...row.querySelectorAll("[data-user-hidden-feature]:checked")].map((input) => input.dataset.userHiddenFeature);
-    if (role === "admin") {
+    if (isFullAccessRole(role)) {
       delete nextPermissions[emailKey];
     } else {
       nextPermissions[emailKey] = {
