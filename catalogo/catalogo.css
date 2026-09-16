@@ -90,7 +90,7 @@ a {
 
 .catalog-intro p {
   margin: 0;
-  color: var(--accent);
+  color: var(--ok);
   font-size: 0.82rem;
   font-weight: 800;
   text-transform: uppercase;

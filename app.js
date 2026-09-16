@@ -600,7 +600,7 @@ const demoState = () => ({
   reportCustomFrom: monthAgoIso(),
   reportCustomTo: todayIso(),
   selectedMonth: currentMonthKey(),
-  productFilters: { query: "", sort: "alphaAsc", category: "all", subcategory: "all", stock: "all", published: "all" },
+  productFilters: { query: "", sort: "recent", category: "all", subcategory: "all", stock: "all", published: "all" },
   productPage: 1,
   customerFilters: { query: "", sort: "alpha" },
   customerPage: 1,
@@ -1928,8 +1928,12 @@ function normalizeState(rawState) {
     payment: "all",
     ...(next.salesHistoryFilters || {}),
   };
-  next.productFilters = { query: "", sort: "alphaAsc", category: "all", subcategory: "all", stock: "all", published: "all", ...(next.productFilters || {}) };
-  if (!["alphaAsc", "alphaDesc", "recent"].includes(next.productFilters.sort)) next.productFilters.sort = "alphaAsc";
+  next.productFilters = { query: "", sort: "recent", category: "all", subcategory: "all", stock: "all", published: "all", ...(next.productFilters || {}) };
+  if (!next.productRecentDefaultApplied) {
+    next.productFilters.sort = "recent";
+    next.productRecentDefaultApplied = true;
+  }
+  if (!["alphaAsc", "alphaDesc", "recent"].includes(next.productFilters.sort)) next.productFilters.sort = "recent";
   next.onlineDraftLines = (next.onlineDraftLines || []).map((line) => {
     const category = canonicalProductCategory(line.category);
     return { ...line, category, subcategory: saleLineSubcategory(category, line.subcategory) };
@@ -4806,23 +4810,10 @@ function productSearchOptions(products = state.products) {
 
 function productColorOptions(selectedColor = "") {
   const selected = normalizeProductDescription(selectedColor || "");
-  const hasSelected = commonProductColors.some((color) => categoryKey(color) === categoryKey(selected));
   return [
     `<option value="">Color</option>`,
     ...commonProductColors.map((color) => `<option value="${htmlAttr(color)}" ${categoryKey(color) === categoryKey(selected) ? "selected" : ""}>${htmlAttr(color)}</option>`),
-    `<option value="__custom" ${selected && !hasSelected ? "selected" : ""}>Otro color</option>`,
   ].join("");
-}
-
-function syncProductCustomColor(selectedColor = "") {
-  const colorSelect = document.getElementById("productColor");
-  const customInput = document.getElementById("productCustomColor");
-  if (!colorSelect || !customInput) return;
-  const custom = colorSelect.value === "__custom";
-  customInput.classList.toggle("is-hidden", !custom);
-  customInput.required = custom;
-  if (custom && selectedColor) customInput.value = selectedColor;
-  if (!custom) customInput.value = "";
 }
 
 function productCategories() {
@@ -5362,7 +5353,6 @@ function openProductModal(productId = null) {
   renderProductCategoryOptions(product?.category || "");
   renderProductSubcategoryOptions(product?.category || "", product?.subcategory || "");
   form.color.innerHTML = productColorOptions(product?.color || "");
-  syncProductCustomColor(product?.color || "");
   productImageDraft = normalizeProductImageUrls(product?.imageUrls || []);
   productVariantDraft = normalizeProductSizeVariants(product?.sizeVariants || []);
   if (product) {
@@ -11440,10 +11430,6 @@ document.addEventListener("change", async (event) => {
     }
     return;
   }
-  if (event.target.id === "productColor") {
-    syncProductCustomColor();
-    return;
-  }
   if (event.target.id === "productCategoryFilter") {
     state.productFilters.category = event.target.value;
     state.productFilters.subcategory = "all";
@@ -11739,7 +11725,6 @@ document.getElementById("productForm").addEventListener("submit", (event) => {
   const now = new Date().toISOString();
   const category = canonicalProductCategory(data.category);
   const code = isAccessoryCategory(category) ? accessoryPriceCode(data.price) : String(data.code || "").trim().toUpperCase();
-  const color = data.color === "__custom" ? data.customColor : data.color;
   if (!isAccessoryCategory(category) && state.products.some((product) => product.id !== editingId && String(product.code || "").toUpperCase() === code)) {
     alert("Ese Código ya existe. Elegí otro Código libre.");
     return;
@@ -11749,7 +11734,7 @@ document.getElementById("productForm").addEventListener("submit", (event) => {
     barcode: data.barcode || barcodeFromCode(code),
     description: normalizeProductDescription(data.description),
     catalogDescription: String(data.catalogDescription || "").trim(),
-    color: normalizeProductDescription(color || ""),
+    color: normalizeProductDescription(data.color || ""),
     category,
     subcategory: isAccessoryCategory(category) ? "" : String(data.subcategory || "").trim(),
     unit: "Unidad",
@@ -12271,7 +12256,7 @@ function seedDemoData() {
   state.stockHistory = [...removeSeed(state.stockHistory), ...stockHistory];
   state.activityLog = [...removeSeed(state.activityLog), { id: "seed-activity-demo", at: new Date().toISOString(), user: "Demo", type: "settings", action: "Cargo datos demo", detail: "Productos, ventas, gastos y catalogo publicados" }];
   state.catalogSettings = { ...catalogSettings(), businessName: "BlackShoes", defaultWhatsappMessage: "Hola {businessName}, quiero consultar por este producto:", sizeAvailabilityMode: "show-unavailable", outOfStockProductMode: "show" };
-  state.productFilters = { query: "", sort: "alphaAsc", category: "all", subcategory: "all", stock: "all", published: "all" };
+  state.productFilters = { query: "", sort: "recent", category: "all", subcategory: "all", stock: "all", published: "all" };
   state.activeView = "dashboard";
   state.selectedMonth = currentMonthKey();
   state.productPage = 1;
