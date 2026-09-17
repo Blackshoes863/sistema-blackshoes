@@ -248,6 +248,33 @@ function productImage(product, className = "product-image") {
   return `<div class="${className} placeholder" aria-hidden="true"><img src="/assets/blackshoes-logo.png" alt=""></div>`;
 }
 
+function productGallery(product) {
+  const images = (product.images || []).filter(Boolean);
+  if (!images.length) {
+    return `<section class="product-gallery single">${productImage(product, "gallery-image")}</section>`;
+  }
+  const firstImage = images[0];
+  return `
+    <section class="product-gallery" data-product-gallery>
+      <div class="gallery-stage">
+        <img class="gallery-main-image" data-gallery-main src="${escapeHtml(firstImage)}" alt="${escapeHtml(`${product.name} foto 1`)}">
+      </div>
+      ${images.length > 1 ? `
+        <div class="gallery-thumbs" aria-label="Fotos del producto">
+          ${images.map((image, index) => {
+            const alt = `${product.name} foto ${index + 1}`;
+            return `
+              <button class="gallery-thumb" data-gallery-thumb data-gallery-image="${escapeHtml(image)}" data-gallery-alt="${escapeHtml(alt)}" aria-current="${index === 0 ? "true" : "false"}" type="button">
+                <img src="${escapeHtml(image)}" alt="${escapeHtml(alt)}">
+              </button>
+            `;
+          }).join("")}
+        </div>
+      ` : ""}
+    </section>
+  `;
+}
+
 function applyBusinessSettings(data = {}) {
   BLACKSHOES_BUSINESS.businessName = data.business_name || data.businessName || BLACKSHOES_BUSINESS.businessName;
   BLACKSHOES_BUSINESS.whatsappNumber = data.whatsapp_number || data.whatsappNumber || window.BLACKSHOES_BUSINESS_CONFIG?.whatsappNumber || BLACKSHOES_BUSINESS.whatsappNumber;
@@ -352,16 +379,13 @@ function renderProductDetail(selectedSize = "") {
       </select>
     </label>
   ` : `<p class="product-meta">Color: ${escapeHtml(product.color || "Unico")}</p>`;
-  const gallery = product.images.length
-    ? product.images.map((image, index) => `<img class="gallery-image" src="${escapeHtml(image)}" alt="${escapeHtml(`${product.name} foto ${index + 1}`)}">`).join("")
-    : productImage(product, "gallery-image");
   const related = publicProducts()
     .filter((item) => item.id !== product.id && item.category === product.category)
     .sort((a, b) => Number(productHasStock(b)) - Number(productHasStock(a)) || newestFirst(a, b))
     .slice(0, 4);
   detail.innerHTML = `
     <article class="product-detail">
-      <section class="product-gallery">${gallery}</section>
+      ${productGallery(product)}
       <section class="product-info">
         <div class="card-badges inline">
           ${!productHasStock(product) ? '<span>Agotado</span>' : ""}
@@ -439,6 +463,18 @@ document.getElementById("catalogMinPrice")?.addEventListener("input", renderCata
 document.getElementById("catalogMaxPrice")?.addEventListener("input", renderCatalogGrid);
 document.getElementById("catalogSort")?.addEventListener("change", renderCatalogGrid);
 document.addEventListener("click", (event) => {
+  const galleryThumb = event.target.closest("[data-gallery-thumb]");
+  if (galleryThumb) {
+    const gallery = galleryThumb.closest("[data-product-gallery]");
+    const mainImage = gallery?.querySelector("[data-gallery-main]");
+    if (mainImage && galleryThumb.dataset.galleryImage) {
+      mainImage.src = galleryThumb.dataset.galleryImage;
+      mainImage.alt = galleryThumb.dataset.galleryAlt || mainImage.alt;
+      gallery.querySelectorAll("[data-gallery-thumb]").forEach((button) => button.setAttribute("aria-current", "false"));
+      galleryThumb.setAttribute("aria-current", "true");
+    }
+    return;
+  }
   const sizeButton = event.target.closest("[data-select-size]");
   if (sizeButton) renderProductDetail(sizeButton.dataset.selectSize);
 });
