@@ -5093,11 +5093,30 @@ function updateProductBarcode() {
   if (barcode) barcode.value = barcodeFromCode(code);
 }
 
+function updateProductMarginAvailability() {
+  const cost = parseMoneyInput(document.getElementById("productCost")?.value || 0);
+  const margin = document.getElementById("productMargin");
+  if (!margin) return false;
+  const enabled = cost > 0;
+  margin.disabled = !enabled;
+  margin.classList.toggle("locked-input", !enabled);
+  margin.title = enabled ? "" : "Cargá un costo para calcular ganancia.";
+  if (!enabled) {
+    margin.value = "";
+    margin.placeholder = "Sin costo";
+  } else if (!String(margin.value || "").trim()) {
+    margin.value = "50";
+    margin.placeholder = "";
+  }
+  return enabled;
+}
+
 function updateProductPrice() {
+  const marginEnabled = updateProductMarginAvailability();
   const cost = parseMoneyInput(document.getElementById("productCost")?.value || 0);
   const margin = Number(document.getElementById("productMargin")?.value || 0);
   const price = document.getElementById("productPrice");
-  if (price) {
+  if (price && marginEnabled) {
     price.value = cost ? Math.round(cost + cost * (margin / 100)) : "";
     formatMoneyInput(price);
   }
@@ -5476,6 +5495,7 @@ function openProductModal(productId = null) {
   renderProductImagePreview();
   updateProductStockInput();
   updateProductCode();
+  updateProductMarginAvailability();
   modal.classList.add("open");
   modal.setAttribute("aria-hidden", "false");
   formatAllMoneyInputs(form);
