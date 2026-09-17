@@ -292,7 +292,7 @@ function closeCustomerRegisterModal({ runSkip = false } = {}) {
 
 function submitCustomerRegisterModal(form) {
   const action = pendingCustomerRegisterAction;
-  const data = Object.fromEntries(new FormData(form));
+  const data = formDataObject(form);
   closeCustomerRegisterModal();
   if (action) {
     action({
@@ -3169,7 +3169,7 @@ async function autoDownloadRemoteState({ force = false } = {}) {
 async function handleAuthSubmit(event, mode = "signin") {
   event.preventDefault();
   const form = document.getElementById("authForm");
-  const data = Object.fromEntries(new FormData(form));
+  const data = formDataObject(form);
   const email = String(data.email || "").trim();
   const password = String(data.password || "").trim();
   if (!email || !password) {
@@ -4171,6 +4171,59 @@ function formatDniInput(input) {
   input.value = formatCustomerDni(input.value);
 }
 
+function parseMoneyInput(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return 0;
+  const normalized = raw
+    .replace(/\s/g, "")
+    .replace(/\./g, "")
+    .replace(",", ".")
+    .replace(/[^\d.-]/g, "");
+  const amount = Number(normalized || 0);
+  return Number.isFinite(amount) ? amount : 0;
+}
+
+function formatMoneyInputValue(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+  const amount = parseMoneyInput(raw);
+  if (!Number.isFinite(amount)) return "";
+  return Math.round(amount).toLocaleString("es-AR");
+}
+
+function formatMoneyInput(input) {
+  if (!input) return;
+  const formatted = formatMoneyInputValue(input.value);
+  input.value = formatted;
+  try {
+    input.setSelectionRange(input.value.length, input.value.length);
+  } catch {
+    // Some readonly inputs do not expose selection ranges.
+  }
+}
+
+function prepareMoneyInput(input) {
+  if (!input) return;
+  if (input.type === "number") input.type = "text";
+  input.inputMode = "numeric";
+  input.autocomplete = "one-time-code";
+  input.dataset.moneyInput = "true";
+  formatMoneyInput(input);
+}
+
+function formatAllMoneyInputs(root = document) {
+  root.querySelectorAll?.(".money-field input").forEach(prepareMoneyInput);
+}
+
+function formDataObject(form) {
+  const data = Object.fromEntries(new FormData(form));
+  form?.querySelectorAll?.(".money-field input[name]").forEach((input) => {
+    const raw = String(input.value || "").trim();
+    data[input.name] = raw ? parseMoneyInput(raw) : "";
+  });
+  return data;
+}
+
 function normalizeProvince(value) {
   const raw = String(value || "").trim();
   const key = normalizeTextKey(raw).normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -5031,18 +5084,21 @@ function updateProductBarcode() {
 }
 
 function updateProductPrice() {
-  const cost = Number(document.getElementById("productCost")?.value || 0);
+  const cost = parseMoneyInput(document.getElementById("productCost")?.value || 0);
   const margin = Number(document.getElementById("productMargin")?.value || 0);
   const price = document.getElementById("productPrice");
-  if (price) price.value = cost ? Math.round(cost + cost * (margin / 100)) : "";
+  if (price) {
+    price.value = cost ? Math.round(cost + cost * (margin / 100)) : "";
+    formatMoneyInput(price);
+  }
   if (isAccessoryCategory(document.getElementById("productCategory")?.value)) updateProductCode();
 }
 
 function updateProductMarginFromPrice() {
-  const cost = Number(document.getElementById("productCost")?.value || 0);
+  const cost = parseMoneyInput(document.getElementById("productCost")?.value || 0);
   const priceInput = document.getElementById("productPrice");
   const marginInput = document.getElementById("productMargin");
-  const price = Number(priceInput?.value || 0);
+  const price = parseMoneyInput(priceInput?.value || 0);
   if (!cost || !priceInput?.value || !marginInput) {
     if (isAccessoryCategory(document.getElementById("productCategory")?.value)) updateProductCode();
     return;
@@ -5175,7 +5231,10 @@ function refreshProductStockActions(show = Boolean(currentEditedStockProduct()))
   const stock = Number(product.stock || 0);
   if (counter) counter.textContent = String(stock);
   if (stockInput) stockInput.value = stock;
-  if (costInput && costInput.value === "" && Number(product.cost || 0) > 0) costInput.value = Number(product.cost || 0);
+  if (costInput && costInput.value === "" && Number(product.cost || 0) > 0) {
+    costInput.value = Number(product.cost || 0);
+    formatMoneyInput(costInput);
+  }
 }
 
 function syncEditedProductStockFields(product) {
@@ -5266,7 +5325,7 @@ function productStockAddDraft(product) {
   if (quantity <= 0) return null;
   const rawCost = String(costInput?.value || "").trim();
   const hasCost = rawCost !== "";
-  const unitCost = hasCost ? Number(rawCost) : Number(product.cost || 0);
+  const unitCost = hasCost ? parseMoneyInput(rawCost) : Number(product.cost || 0);
   if (!Number.isFinite(unitCost) || unitCost < 0) {
     alert("El Costo Unitario no es valido.");
     return false;
@@ -5409,6 +5468,7 @@ function openProductModal(productId = null) {
   updateProductCode();
   modal.classList.add("open");
   modal.setAttribute("aria-hidden", "false");
+  formatAllMoneyInputs(form);
   setTimeout(() => form.description.focus(), 0);
 }
 
@@ -5642,6 +5702,7 @@ function openStockCostUpdateModal(payload) {
   acceptButton.textContent = "Si, actualizar costo";
   modal.classList.add("open");
   modal.setAttribute("aria-hidden", "false");
+  formatAllMoneyInputs(modal);
 }
 
 function syncStockCostPriceFields(changedField = "margin") {
@@ -5651,11 +5712,12 @@ function syncStockCostPriceFields(changedField = "margin") {
   const unitCost = Number(pendingProductStockCostSave.stockDraft?.unitCost || 0);
   if (!marginInput || !priceInput) return;
   if (changedField === "price") {
-    const margin = marginFromProductPrice(unitCost, Number(priceInput.value || 0));
+    const margin = marginFromProductPrice(unitCost, parseMoneyInput(priceInput.value || 0));
     marginInput.value = Number.isInteger(margin) ? String(margin) : String(margin);
     return;
   }
   priceInput.value = recalculatedProductPrice(pendingProductStockCostSave.existing, unitCost, Number(marginInput.value || 0));
+  formatMoneyInput(priceInput);
 }
 
 function closeStockCostUpdateModal() {
@@ -5687,7 +5749,7 @@ async function saveProductUpdatingCost() {
   const updatePrice = Boolean(document.getElementById("stockCostUpdatePrice")?.checked);
   if (updatePrice) {
     payload.updatedProduct.margin = Number(document.getElementById("stockCostMargin")?.value || payload.updatedProduct.margin || 0);
-    payload.updatedProduct.price = Number(document.getElementById("stockCostRecalculatedPrice")?.value || payload.updatedProduct.price || 0);
+    payload.updatedProduct.price = parseMoneyInput(document.getElementById("stockCostRecalculatedPrice")?.value || payload.updatedProduct.price || 0);
   }
   pendingProductStockCostSave = null;
   await commitProductFormSave({ ...payload, updateStockCost: true, updateStockPrice: updatePrice });
@@ -5781,14 +5843,17 @@ function updateStockEntryCurrentPrice(product = null) {
   }
   const unitCostRaw = String(document.getElementById("stockEntryUnitCost")?.value || "").trim();
   const priceAction = document.getElementById("stockEntryPriceAction")?.value || "keep";
-  const hasUnitCost = unitCostRaw !== "" && Number.isFinite(Number(unitCostRaw));
+  const unitCostValue = parseMoneyInput(unitCostRaw);
+  const hasUnitCost = unitCostRaw !== "" && Number.isFinite(unitCostValue);
   if (priceAction === "recalculate" && hasUnitCost) {
-    const unitCost = Number(unitCostRaw);
+    const unitCost = unitCostValue;
     const margin = Number(selectedProduct.margin || 0);
     input.value = Math.round(unitCost + unitCost * (margin / 100));
+    formatMoneyInput(input);
     return;
   }
   input.value = Math.round(Number(selectedProduct.price || 0));
+  formatMoneyInput(input);
 }
 
 function findStockEntryProduct(query) {
@@ -5908,6 +5973,7 @@ function openStockEntryModal() {
   const modal = document.getElementById("stockEntryModal");
   modal.classList.add("open");
   modal.setAttribute("aria-hidden", "false");
+  formatAllMoneyInputs(modal);
   setTimeout(() => document.getElementById("stockEntryProductSearch")?.focus(), 0);
 }
 
@@ -5919,13 +5985,13 @@ function closeStockEntryModal() {
 }
 
 function addStockEntryDraftFromForm(form) {
-  const data = Object.fromEntries(new FormData(form));
+  const data = formDataObject(form);
   const entryDate = todayIso();
   const product = state.products.find((item) => item.id === data.productId) || findStockEntryProduct(data.productQuery);
   const quantity = Number(data.quantity || 0);
   const size = String(data.size || "").trim().toUpperCase();
   const hasUnitCost = String(data.unitCost || "").trim() !== "";
-  const unitCost = hasUnitCost ? Number(data.unitCost || 0) : null;
+  const unitCost = hasUnitCost ? parseMoneyInput(data.unitCost || 0) : null;
   if (!product || !product.tracksStock) {
     alert("Elegí un Producto con Control de Stock.");
     return false;
@@ -6101,6 +6167,7 @@ function openManualItemModal() {
   const modal = document.getElementById("manualItemModal");
   modal.classList.add("open");
   modal.setAttribute("aria-hidden", "false");
+  formatAllMoneyInputs(modal);
   document.getElementById("manualItemDescription").focus();
 }
 
@@ -6647,6 +6714,7 @@ function editWorkshopPrice(orderId) {
   document.getElementById("workshopPriceTitle").textContent = `Editar Precio ${order.number}`;
   modal.classList.add("open");
   modal.setAttribute("aria-hidden", "false");
+  formatAllMoneyInputs(modal);
   setTimeout(() => form.elements.price.focus(), 0);
 }
 
@@ -7752,6 +7820,7 @@ function render() {
   renderReports();
   renderSettings();
   renderMonthlyClosures();
+  formatAllMoneyInputs();
   lockAllBrowserAutofillFields();
 }
 
@@ -8034,7 +8103,10 @@ function updateCartPaymentPreview(cart = activeCart()) {
   const totalNode = document.getElementById("cartFinalTotalValue");
   const paidInput = document.getElementById("cartPaidAmount");
   if (totalNode) totalNode.textContent = money(total);
-  if (paidInput && (!cart.partialPaymentEnabled || cart.paidAmount === "" || cart.paidAmount == null)) paidInput.value = Number(cart.partialPaymentEnabled ? cartPaidAmount(cart) : total || 0);
+  if (paidInput && (!cart.partialPaymentEnabled || cart.paidAmount === "" || cart.paidAmount == null)) {
+    paidInput.value = Number(cart.partialPaymentEnabled ? cartPaidAmount(cart) : total || 0);
+    formatMoneyInput(paidInput);
+  }
   const debt = cartOutstandingDebt(cart);
   const preview = document.querySelector(".sale-debt-preview");
   if (preview) {
@@ -8193,7 +8265,7 @@ function closeCustomerEditModal() {
 }
 
 async function submitCustomerEditModal(form) {
-  const data = Object.fromEntries(new FormData(form));
+  const data = formDataObject(form);
   const customer = state.customers.find((item) => item.id === data.customerId);
   const name = normalizeCustomerName(data.name);
   if (!customer || !name) return;
@@ -8437,7 +8509,7 @@ function renderCustomerDebtPanel(customer) {
 }
 
 async function registerCustomerDebtPayment(form) {
-  const data = Object.fromEntries(new FormData(form));
+  const data = formDataObject(form);
   const customer = state.customers.find((item) => item.id === data.customerId);
   const isInitialDebt = data.saleId === "initial";
   const sale = isInitialDebt ? null : state.sales.find((item) => item.id === data.saleId);
@@ -8539,8 +8611,8 @@ function cashCloseDailySummary(date) {
 function cashCloseDifference() {
   const date = normalizeDateInput(state.cashCloseDate) || todayIso();
   const summary = cashCloseDailySummary(date);
-  const counted = Number(document.getElementById("cashCloseCounted")?.value || 0);
-  const withdrawals = Number(document.getElementById("cashCloseWithdrawals")?.value || 0);
+  const counted = parseMoneyInput(document.getElementById("cashCloseCounted")?.value || 0);
+  const withdrawals = parseMoneyInput(document.getElementById("cashCloseWithdrawals")?.value || 0);
   return counted + withdrawals - summary.expectedCash;
 }
 
@@ -8762,7 +8834,7 @@ function updateOnlineCostPreview() {
   const form = document.getElementById("onlineForm");
   const preview = document.getElementById("onlineCostPreview");
   if (!form || !preview) return;
-  const data = Object.fromEntries(new FormData(form));
+  const data = formDataObject(form);
   const grossAmount = Number(data.saleAmount ?? data.total ?? 0);
   const discountAmount = Math.min(grossAmount, Math.max(0, Number(data.discountAmount || 0)));
   const saleAmount = onlineDiscountedSaleAmount(grossAmount, discountAmount);
@@ -9400,7 +9472,7 @@ function deleteFixedExpenseTemplate(templateId) {
 }
 
 function saveBusinessSettingsFromForm(form) {
-  const data = Object.fromEntries(new FormData(form));
+  const data = formDataObject(form);
   state.businessSettings = {
     ...businessSettings(),
     tiendaNubeCommissionRate: Number(data.tiendaNubeCommissionRate || 0),
@@ -9417,7 +9489,7 @@ function saveBusinessSettingsFromForm(form) {
 }
 
 async function saveDataLoadSettingsFromForm(form) {
-  const data = Object.fromEntries(new FormData(form));
+  const data = formDataObject(form);
   state.businessSettings = {
     ...businessSettings(),
     cloudInitialSalesDays: Number(data.cloudInitialSalesDays ?? defaultBusinessSettings.cloudInitialSalesDays),
@@ -9439,7 +9511,7 @@ async function saveDataLoadSettingsFromForm(form) {
 }
 
 async function saveCatalogSettingsFromForm(form) {
-  const data = Object.fromEntries(new FormData(form));
+  const data = formDataObject(form);
   const nextSettings = catalogSettings({
     catalogSettings: {
       businessName: data.businessName,
@@ -9620,6 +9692,7 @@ function openSaleEditModal(saleId) {
   if (sale.channel === "online") updateSaleEditOnlineTotal();
   modal.classList.add("open");
   modal.setAttribute("aria-hidden", "false");
+  formatAllMoneyInputs(modal);
 }
 
 function closeSaleEditModal() {
@@ -9632,9 +9705,10 @@ function closeSaleEditModal() {
 function updateSaleEditOnlineTotal() {
   const form = document.getElementById("saleEditForm");
   if (!form || !form.elements.grossAmount || !form.elements.discountAmount || !form.elements.total) return;
-  const grossAmount = Math.max(0, Number(form.elements.grossAmount.value || 0));
-  const discountAmount = Math.min(grossAmount, Math.max(0, Number(form.elements.discountAmount.value || 0)));
+  const grossAmount = Math.max(0, parseMoneyInput(form.elements.grossAmount.value || 0));
+  const discountAmount = Math.min(grossAmount, Math.max(0, parseMoneyInput(form.elements.discountAmount.value || 0)));
   form.elements.total.value = onlineDiscountedSaleAmount(grossAmount, discountAmount);
+  formatMoneyInput(form.elements.total);
 }
 
 function openOnlineOrderEditModal(orderId) {
@@ -9681,7 +9755,7 @@ function syncLinkedOnlineOrderFromSale(sale, explicitOrderId = "") {
 }
 
 function saveSaleEdit(form) {
-  const data = Object.fromEntries(new FormData(form));
+  const data = formDataObject(form);
   const sale = state.sales.find((item) => item.id === data.saleId);
   if (!sale) return;
   if (CLOUD_DATA_ENABLED && isUuid(sale.id)) {
@@ -11129,6 +11203,9 @@ function defaultExpenseFilters() {
 }
 
 document.addEventListener("input", (event) => {
+  if (event.target.matches(".money-field input")) {
+    prepareMoneyInput(event.target);
+  }
   if (event.target.id === "stockCostMargin") {
     syncStockCostPriceFields("margin");
     return;
@@ -11332,12 +11409,12 @@ document.addEventListener("input", (event) => {
     saveUiState();
   }
   if (event.target.id === "cartPaidAmount") {
-    cart.paidAmount = event.target.value;
+    cart.paidAmount = String(event.target.value || "").trim() ? parseMoneyInput(event.target.value) : "";
     saveUiState();
     updateCartPaymentPreview(cart);
   }
   if (event.target.id === "cartManualTotal") {
-    cart.manualTotal = event.target.value;
+    cart.manualTotal = String(event.target.value || "").trim() ? parseMoneyInput(event.target.value) : "";
     saveUiState();
     updateCartPaymentPreview(cart);
   }
@@ -11724,7 +11801,7 @@ document.getElementById("settingsPasswordForm")?.addEventListener("submit", (eve
 document.getElementById("manualItemForm").addEventListener("submit", (event) => {
   event.preventDefault();
   const cart = activeCart();
-  const data = Object.fromEntries(new FormData(event.target));
+  const data = formDataObject(event.target);
   if (!cart) return;
   addManualItem(cart.id, data.description, data.price, "Manual");
   closeManualItemModal();
@@ -11734,7 +11811,7 @@ document.getElementById("productForm").addEventListener("submit", (event) => {
   event.preventDefault();
   renderProductImagePreview();
   syncProductVariantInputFromRows();
-  const data = Object.fromEntries(new FormData(event.target));
+  const data = formDataObject(event.target);
   const editingId = data.editingProductId || "";
   const existing = state.products.find((product) => product.id === editingId);
   if (existing && isAccessoryCategory(existing.category)) {
@@ -11787,7 +11864,7 @@ document.getElementById("productForm").addEventListener("submit", (event) => {
 
 document.getElementById("priceUpdateForm").addEventListener("submit", (event) => {
   event.preventDefault();
-  const data = Object.fromEntries(new FormData(event.target));
+  const data = formDataObject(event.target);
   applyPriceUpdate(Number(data.percent || 0));
   closePriceUpdateModal();
 });
@@ -11796,7 +11873,7 @@ document.getElementById("stockEntryForm").addEventListener("submit", (event) => 
   event.preventDefault();
   addStockEntryDraftFromForm(event.target);
   return;
-  const data = Object.fromEntries(new FormData(event.target));
+  const data = formDataObject(event.target);
   const entryDate = normalizeDateInput(data.date);
   if (!entryDate) {
     alert("Escribí la Fecha como DD/MM/AA.");
@@ -11818,7 +11895,7 @@ document.getElementById("stockEntryForm").addEventListener("submit", (event) => 
 
 document.getElementById("customerForm").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const data = Object.fromEntries(new FormData(event.target));
+  const data = formDataObject(event.target);
   const name = normalizeCustomerName(data.name);
   if (!name) return;
   const editingId = data.customerId || "";
@@ -11881,7 +11958,7 @@ document.getElementById("customerDebtPaymentForm")?.addEventListener("submit", (
 
 document.getElementById("cashCloseForm").addEventListener("submit", (event) => {
   event.preventDefault();
-  const data = Object.fromEntries(new FormData(event.target));
+  const data = formDataObject(event.target);
   const date = normalizeDateInput(state.cashCloseDate) || todayIso();
   const summary = cashCloseDailySummary(date);
   const countedCash = Number(data.countedCash || 0);
@@ -11907,7 +11984,7 @@ document.getElementById("cashCloseForm").addEventListener("submit", (event) => {
 
 document.getElementById("workshopPriceForm").addEventListener("submit", (event) => {
   event.preventDefault();
-  const data = Object.fromEntries(new FormData(event.target));
+  const data = formDataObject(event.target);
   const saved = saveWorkshopPrice(data.orderId, data.price);
   if (!saved) return;
   closeWorkshopPriceModal();
@@ -11915,17 +11992,17 @@ document.getElementById("workshopPriceForm").addEventListener("submit", (event) 
 
 document.getElementById("workshopDeliveryForm").addEventListener("submit", (event) => {
   event.preventDefault();
-  const data = Object.fromEntries(new FormData(event.target));
+  const data = formDataObject(event.target);
   completeWorkshop(data.orderId, data.paymentMethod || "efectivo");
   closeWorkshopDeliveryModal();
 });
 
 document.getElementById("workshopForm").addEventListener("submit", (event) => {
   event.preventDefault();
-  const data = Object.fromEntries(new FormData(event.target));
+  const data = formDataObject(event.target);
   const customerName = String(document.getElementById("workshopClientLookup")?.value || data.workshopClientLookup || "").trim();
   const phone = String(document.getElementById("workshopPhoneEntry")?.value || data.workshopPhoneEntry || "").trim();
-  const price = Number(document.getElementById("workshopPriceEntry")?.value || data.workshopPriceEntry || 0);
+  const price = parseMoneyInput(document.getElementById("workshopPriceEntry")?.value || data.workshopPriceEntry || 0);
   if (!customerName) {
     alert("Ingresá el Cliente del pedido de taller.");
     return;
@@ -11958,7 +12035,7 @@ document.getElementById("workshopForm").addEventListener("submit", (event) => {
 
 document.getElementById("onlineForm").addEventListener("submit", (event) => {
   event.preventDefault();
-  const data = Object.fromEntries(new FormData(event.target));
+  const data = formDataObject(event.target);
   const saleDate = normalizeDateInput(data.date);
   if (!saleDate) {
     alert("Elegí la Fecha de la venta online.");
@@ -12096,7 +12173,7 @@ document.getElementById("onlineForm").addEventListener("submit", (event) => {
 
 document.getElementById("expenseForm").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const data = Object.fromEntries(new FormData(event.target));
+  const data = formDataObject(event.target);
   const concept = String(document.getElementById("expenseConcept")?.value || data.expenseConceptEntry || "").trim();
   const movementDate = normalizeDateInput(data.date);
   if (!movementDate) {
@@ -12302,6 +12379,7 @@ if (!state.carts.length) addCart();
 setView(state.activeView || "dashboard");
 window.matchMedia?.("(max-width: 760px)")?.addEventListener("change", () => render());
 initializeSupabaseAuth();
+
 
 
 
