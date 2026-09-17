@@ -1040,7 +1040,15 @@ function nextSuggestedProductSize() {
 function normalizeProductImageUrls(value = []) {
   const raw = String(value || "");
   const rows = Array.isArray(value) ? value : raw.includes("data:image/") ? raw.split(/\r?\n/) : raw.split(/\r?\n|,/);
-  return rows.map((url) => String(url || "").trim()).filter(Boolean);
+  const seen = new Set();
+  return rows
+    .map((url) => String(url || "").trim())
+    .filter(Boolean)
+    .filter((url) => {
+      if (seen.has(url)) return false;
+      seen.add(url);
+      return true;
+    });
 }
 
 function serializeProductImageUrls(product) {
@@ -1110,6 +1118,7 @@ async function productImageFileToDataUrl(file) {
 function renderProductImagePreview() {
   const input = document.getElementById("productImageUrls");
   const preview = document.getElementById("productImagePreview");
+  productImageDraft = normalizeProductImageUrls(productImageDraft);
   if (input) input.value = productImageDraft.join("\n");
   if (!preview) return;
   preview.innerHTML = productImageDraft.length
@@ -1133,7 +1142,7 @@ async function addProductImageFiles(files = []) {
   const selected = list.slice(0, availableSlots);
   for (const file of selected) {
     const dataUrl = await productImageFileToDataUrl(file);
-    if (dataUrl) productImageDraft.push(dataUrl);
+    if (dataUrl) productImageDraft = normalizeProductImageUrls([...productImageDraft, dataUrl]);
   }
   renderProductImagePreview();
   showActionToast(`${selected.length} ${selected.length === 1 ? "foto cargada" : "fotos cargadas"}.`);
@@ -1179,10 +1188,11 @@ function normalizeCloudProduct(row = {}) {
       size: variant.size,
       stock: variant.current_stock,
     })));
-  const imageUrls = (row.product_images || [])
+  const imageUrls = normalizeProductImageUrls((row.product_images || [])
+    .filter((image) => !image.archived_at)
     .sort((a, b) => Number(b.is_primary) - Number(a.is_primary) || Number(a.sort_order || 0) - Number(b.sort_order || 0))
     .map((image) => image.public_url || image.storage_path)
-    .filter(Boolean);
+    .filter(Boolean));
   return {
     id: row.id,
     code: row.sku || "",
