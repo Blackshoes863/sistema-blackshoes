@@ -224,6 +224,9 @@ const cloudDashboardSummaryFailures = new Map();
 const cloudSalesHistoryCache = new Map();
 const cloudSalesHistoryLoads = new Map();
 const cloudSalesHistoryFailures = new Map();
+const cloudProductsCache = new Map();
+const cloudProductsLoads = new Map();
+const cloudProductsFailures = new Map();
 const cloudExpensesCache = new Map();
 const cloudExpensesLoads = new Map();
 const cloudExpensesFailures = new Map();
@@ -1232,20 +1235,25 @@ function normalizeCloudProduct(row = {}) {
   };
 }
 
+function mergeCloudProductsIntoState(rows = []) {
+  const normalized = (rows || [])
+    .filter((product) => product.sku !== "MANUAL_INTERNAL")
+    .map(normalizeCloudProduct);
+  if (!normalized.length) return [];
+  const productsById = new Map((state.products || []).map((product) => [product.id, product]));
+  normalized.forEach((product) => productsById.set(product.id, { ...productsById.get(product.id), ...product }));
+  state.products = [...productsById.values()].sort((a, b) => compareProducts(a, b, "recent"));
+  return normalized;
+}
+
 async function loadCloudProductCatalog() {
   if (!cloudEnabledWithSession()) return false;
-  const [{ data: categories, error: categoryError }, { data: subcategories, error: subcategoryError }, { data: products, error: productError }] = await Promise.all([
+  const [{ data: categories, error: categoryError }, { data: subcategories, error: subcategoryError }] = await Promise.all([
     supabaseClient.from("product_categories").select("id,name,slug,code,active,sort_order").is("archived_at", null).order("sort_order", { ascending: true }).order("name", { ascending: true }),
     supabaseClient.from("product_subcategories").select("id,category_id,name,slug,active,sort_order").is("archived_at", null).order("sort_order", { ascending: true }).order("name", { ascending: true }),
-    supabaseClient
-      .from("products")
-      .select("*,product_categories(id,name,slug,code),product_subcategories(id,name,slug),product_variants(id,size,current_stock,active,sort_order,archived_at),product_images(id,storage_path,public_url,alt_text,is_primary,sort_order,archived_at)")
-      .is("archived_at", null)
-      .order("created_at", { ascending: false }),
   ]);
   if (categoryError) throw new Error(`categorias: ${categoryError.message}`);
   if (subcategoryError) throw new Error(`subcategorias: ${subcategoryError.message}`);
-  if (productError) throw new Error(`productos: ${productError.message}`);
   const categoriesById = new Map((categories || []).map((category) => [category.id, category]));
   const categoryRows = [];
   (categories || []).forEach((category) => categoryRows.push(cloudCategoryEntry(category)));
@@ -1254,9 +1262,6 @@ async function loadCloudProductCatalog() {
     if (category) categoryRows.push(cloudCategoryEntry(category, subcategory));
   });
   state.customProductCategories = normalizeCustomProductCategories(categoryRows);
-  state.products = (products || [])
-    .filter((product) => product.sku !== "MANUAL_INTERNAL")
-    .map(normalizeCloudProduct);
   persistStateLocalOnly();
   return true;
 }
@@ -1844,9 +1849,11 @@ function requestCloudDashboardSummary(monthKey = state.selectedMonth || currentM
 
 async function loadCloudData({ mode = "initial", force = false } = {}) {
   invalidateCloudSalesHistoryCache();
+  invalidateCloudProductsCache();
   invalidateCloudExpensesCache();
   await loadCloudBusinessSettings();
   await loadCloudProductCatalog();
+  await loadCloudProductsPage(state.productFilters, state.productPage || 1, { force: true });
   await loadCloudOperationalData({ mode, force });
   await loadCloudDashboardSummary(state.selectedMonth || currentMonthKey(), { force: true });
   persistStateLocalOnly();
@@ -5729,7 +5736,7 @@ function renderProductFilters() {
   const stock = document.getElementById("productStockFilter");
   const published = document.getElementById("productPublishedFilter");
   if (query) query.value = state.productFilters.query || "";
-  if (sort) sort.value = state.productFilters.sort || "alphaAsc";
+  if (sort) sort.value = state.productFilters.sort || "recent";
   if (category) {
     const categories = productCategories();
     let selected = state.productFilters.category || "all";
@@ -5799,6 +5806,97 @@ function compareProducts(a, b, sort = "alphaAsc") {
   return codeOrder;
 }
 
+function cloudProductsRequest(filters = state.productFilters || {}, page = state.productPage || 1) {
+  const safeFilters = { query: "", sort: "recent", category: "all", subcategory: "all", stock: "all", published: "all", ...(filters || {}) };
+  return {
+    query: String(safeFilters.query || "").trim(),
+    sort: safeFilters.sort || "recent",
+    category: safeFilters.category || "all",
+    subcategory: safeFilters.subcategory || "all",
+    stock: safeFilters.stock || "all",
+    published: safeFilters.published || "all",
+    page: Math.max(1, Number(page || 1)),
+    pageSize: PRODUCT_PAGE_SIZE,
+  };
+}
+
+function cloudProductsKey(request) {
+  return JSON.stringify({
+    query: request.query,
+    sort: request.sort,
+    category: request.category,
+    subcategory: request.subcategory,
+    stock: request.stock,
+    published: request.published,
+    page: request.page,
+    pageSize: request.pageSize,
+  });
+}
+
+function cachedCloudProductsPage(filters = state.productFilters || {}, page = state.productPage || 1) {
+  return cloudProductsCache.get(cloudProductsKey(cloudProductsRequest(filters, page)));
+}
+
+async function loadCloudProductsPage(filters = state.productFilters || {}, page = state.productPage || 1, { force = false } = {}) {
+  if (!cloudEnabledWithSession()) return null;
+  const request = cloudProductsRequest(filters, page);
+  const key = cloudProductsKey(request);
+  if (!force && cloudProductsCache.has(key)) return cloudProductsCache.get(key);
+  if (cloudProductsLoads.has(key)) return cloudProductsLoads.get(key);
+  const recentFailureAt = cloudProductsFailures.get(key) || 0;
+  if (!force && Date.now() - recentFailureAt < 30000) return null;
+  const load = (async () => {
+    const { data, error } = await supabaseClient.rpc("list_products_page", {
+      p_query: request.query,
+      p_sort: request.sort,
+      p_category: request.category,
+      p_subcategory: request.subcategory,
+      p_stock: request.stock,
+      p_published: request.published,
+      p_page: request.page,
+      p_page_size: request.pageSize,
+    });
+    if (error) throw new Error(`productos: ${error.message}`);
+    const rows = mergeCloudProductsIntoState(data?.rows || []);
+    const result = {
+      rows,
+      totalCount: Number(data?.totalCount || 0),
+      page: Number(data?.page || request.page),
+      pageSize: Number(data?.pageSize || request.pageSize),
+      loadedAt: Date.now(),
+    };
+    cloudProductsCache.set(key, result);
+    cloudProductsFailures.delete(key);
+    persistStateLocalOnly();
+    return result;
+  })();
+  cloudProductsLoads.set(key, load);
+  try {
+    return await load;
+  } catch (error) {
+    cloudProductsFailures.set(key, Date.now());
+    console.warn("Cloud products failed", error);
+    return null;
+  } finally {
+    cloudProductsLoads.delete(key);
+  }
+}
+
+function requestCloudProductsPage(filters = state.productFilters || {}, page = state.productPage || 1) {
+  if (!cloudEnabledWithSession()) return;
+  const request = cloudProductsRequest(filters, page);
+  const key = cloudProductsKey(request);
+  if (cloudProductsCache.has(key) || cloudProductsLoads.has(key)) return;
+  loadCloudProductsPage(filters, page).then((result) => {
+    if (result && state.activeView === "products") renderCatalog();
+  });
+}
+
+function invalidateCloudProductsCache() {
+  cloudProductsCache.clear();
+  cloudProductsFailures.clear();
+}
+
 function productsForPriceUpdate() {
   const scope = document.getElementById("priceUpdateScope")?.value || "all";
   if (scope === "category") {
@@ -5841,6 +5939,7 @@ async function commitProductFormSave({ existing, updatedProduct, stockDraft = nu
         return;
       }
       updatedProduct = await saveCloudProductRecord(existing, updatedProduct);
+      invalidateCloudProductsCache();
     }
   } catch (error) {
     console.warn("Cloud product save failed", error);
@@ -8479,11 +8578,15 @@ function renderCatalog() {
   renderProductCategoryOptions();
   renderProductSubcategoryOptions();
   renderProductFilters();
+  requestCloudProductsPage(state.productFilters, state.productPage);
+  const cloudPage = cachedCloudProductsPage(state.productFilters, state.productPage);
   const products = filteredProducts();
-  const totalPages = Math.max(1, Math.ceil(products.length / PRODUCT_PAGE_SIZE));
+  const totalItems = cloudPage ? cloudPage.totalCount : products.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / PRODUCT_PAGE_SIZE));
   const current = Math.min(Math.max(1, Number(state.productPage || 1)), totalPages);
-  const start = (current - 1) * PRODUCT_PAGE_SIZE;
-  const pageProducts = products.slice(start, start + PRODUCT_PAGE_SIZE);
+  const pageProducts = cloudPage && cloudPage.page === current
+    ? cloudPage.rows
+    : products.slice((current - 1) * PRODUCT_PAGE_SIZE, current * PRODUCT_PAGE_SIZE);
   state.productPage = current;
   document.getElementById("productsTable").innerHTML = pageProducts.map((product) => `
     <tr>
@@ -8500,9 +8603,9 @@ function renderCatalog() {
         <button class="tiny-action danger-action" data-delete-product="${product.id}" type="button" title="Eliminar Producto">Eliminar</button>
       </td>
     </tr>
-  `).join("") || `<tr><td colspan="8">No hay Productos para esos Filtros.</td></tr>`;
+  `).join("") || `<tr><td colspan="8">${cloudEnabledWithSession() && !cloudPage ? "Cargando productos..." : "No hay Productos para esos Filtros."}</td></tr>`;
   const pagination = document.getElementById("productsPagination");
-  if (pagination) pagination.innerHTML = productPaginationControls(current, totalPages, products.length);
+  if (pagination) pagination.innerHTML = productPaginationControls(current, totalPages, totalItems);
 }
 
 function openCatalogProduct(productId) {
@@ -11349,6 +11452,7 @@ document.addEventListener("click", (event) => {
                 return;
               }
               await archiveCloudRecord("product", product.id);
+              invalidateCloudProductsCache();
               logActivity("product", "Archivo producto", `${product.code} - ${product.description}`);
               await loadCloudData();
               saveState();
