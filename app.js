@@ -218,6 +218,9 @@ let pendingCustomerRegisterAction = null;
 let pendingCustomerRegisterSkipAction = null;
 let pendingProductStockCostSave = null;
 const unlockedExpenseAmounts = new Set();
+const cloudDashboardSummaryCache = new Map();
+const cloudDashboardSummaryLoads = new Map();
+const cloudDashboardSummaryFailures = new Map();
 
 function openConfirmModal({ title = "Confirmar accion", message = "", confirmText = "Confirmar", cancelText = "Cancelar", danger = false, onConfirm = null, onCancel = null }) {
   pendingConfirmAction = typeof onConfirm === "function" ? onConfirm : null;
@@ -1660,10 +1663,79 @@ async function loadCloudBusinessSettings() {
   return true;
 }
 
+function cloudDashboardSummaryKey(monthKey = state.selectedMonth || currentMonthKey(), dateKey = todayIso()) {
+  return `${monthKey}|${dateKey}`;
+}
+
+function normalizeCloudDashboardSummary(data = {}, monthKey = state.selectedMonth || currentMonthKey()) {
+  return {
+    month: data.month || monthKey,
+    monthRevenue: Number(data.monthRevenue || 0),
+    monthExpenses: Number(data.monthExpenses || 0),
+    monthMerchandiseCost: Number(data.monthMerchandiseCost || 0),
+    monthResult: Number(data.monthResult || 0),
+    monthSalesCount: Number(data.monthSalesCount || 0),
+    receivablesTotal: Number(data.receivablesTotal || 0),
+    todayRevenue: Number(data.todayRevenue || 0),
+    todayOnlineRevenue: Number(data.todayOnlineRevenue || 0),
+    todayPaymentTotal: Number(data.todayPaymentTotal || 0),
+    todayPaymentMethods: (Array.isArray(data.todayPaymentMethods) ? data.todayPaymentMethods : []).map((row) => ({
+      method: row.method || "sin-medio",
+      count: Number(row.count || 0),
+      total: Number(row.total || 0),
+    })),
+    loadedAt: Date.now(),
+  };
+}
+
+function cachedCloudDashboardSummary(monthKey = state.selectedMonth || currentMonthKey()) {
+  return cloudDashboardSummaryCache.get(cloudDashboardSummaryKey(monthKey));
+}
+
+async function loadCloudDashboardSummary(monthKey = state.selectedMonth || currentMonthKey(), { force = false } = {}) {
+  if (!cloudEnabledWithSession()) return null;
+  const key = cloudDashboardSummaryKey(monthKey);
+  if (!force && cloudDashboardSummaryCache.has(key)) return cloudDashboardSummaryCache.get(key);
+  if (cloudDashboardSummaryLoads.has(key)) return cloudDashboardSummaryLoads.get(key);
+  const recentFailureAt = cloudDashboardSummaryFailures.get(key) || 0;
+  if (!force && Date.now() - recentFailureAt < 30000) return null;
+  const request = (async () => {
+    const { data, error } = await supabaseClient.rpc("get_dashboard_month_summary", {
+      p_month: `${monthKey}-01`,
+      p_today: todayIso(),
+    });
+    if (error) throw new Error(`resumen mensual: ${error.message}`);
+    const summary = normalizeCloudDashboardSummary(data, monthKey);
+    cloudDashboardSummaryCache.set(key, summary);
+    cloudDashboardSummaryFailures.delete(key);
+    return summary;
+  })();
+  cloudDashboardSummaryLoads.set(key, request);
+  try {
+    return await request;
+  } catch (error) {
+    cloudDashboardSummaryFailures.set(key, Date.now());
+    console.warn("Cloud dashboard summary failed", error);
+    return null;
+  } finally {
+    cloudDashboardSummaryLoads.delete(key);
+  }
+}
+
+function requestCloudDashboardSummary(monthKey = state.selectedMonth || currentMonthKey()) {
+  if (!cloudEnabledWithSession()) return;
+  const key = cloudDashboardSummaryKey(monthKey);
+  if (cloudDashboardSummaryCache.has(key) || cloudDashboardSummaryLoads.has(key)) return;
+  loadCloudDashboardSummary(monthKey).then((summary) => {
+    if (summary && state.selectedMonth === monthKey) renderDashboard();
+  });
+}
+
 async function loadCloudData({ mode = "initial", force = false } = {}) {
   await loadCloudBusinessSettings();
   await loadCloudProductCatalog();
   await loadCloudOperationalData({ mode, force });
+  await loadCloudDashboardSummary(state.selectedMonth || currentMonthKey(), { force: true });
   persistStateLocalOnly();
   return true;
 }
@@ -7859,25 +7931,61 @@ function renderConnection() {
 function renderDashboard() {
   state.selectedMonth = state.selectedMonth || currentMonthKey();
   renderMonthSelector();
+  requestCloudDashboardSummary(state.selectedMonth);
   const todaySales = state.sales.filter((sale) => sale.date === todayIso());
   const monthSales = state.sales.filter((sale) => monthKeyFromDate(sale.date) === state.selectedMonth);
   const monthExpenses = operatingExpenseRows().filter((expense) => monthKeyFromDate(expense.date) === state.selectedMonth && expenseCountsInResult(expense));
   const historicalMonth = historicalClosureForMonth(state.selectedMonth);
   const historicalMetrics = historicalMonth ? closureScopeMetrics(historicalMonth, "total") : null;
-  const todayLocalRevenue = sum(todaySales.filter((sale) => sale.channel === "local"), (sale) => sale.total);
-  const todayOnlineRevenue = sum(todaySales.filter((sale) => sale.channel === "online"), (sale) => sale.total);
-  const monthlyRevenue = sum(monthSales, (sale) => sale.total) + Number(historicalMetrics?.income || 0);
-  const monthlyExpenses = sum(monthExpenses, (expense) => expense.amount) + Number(historicalMetrics?.expenseTotal || 0);
-  const monthlyMerchandiseCost = sum(monthSales, (sale) => saleMerchandiseCost(sale)) + Number(historicalMetrics?.merchandiseCost || 0);
-  const receivablesTotal = sum(state.sales.filter((sale) => sale.channel === "local"), (sale) => saleOutstandingDebt(sale))
+  const cloudSummary = cachedCloudDashboardSummary(state.selectedMonth);
+  let todayLocalRevenue = sum(todaySales.filter((sale) => sale.channel === "local"), (sale) => sale.total);
+  let todayOnlineRevenue = sum(todaySales.filter((sale) => sale.channel === "online"), (sale) => sale.total);
+  let monthlyRevenue = sum(monthSales, (sale) => sale.total) + Number(historicalMetrics?.income || 0);
+  let monthlyExpenses = sum(monthExpenses, (expense) => expense.amount) + Number(historicalMetrics?.expenseTotal || 0);
+  let monthlyMerchandiseCost = sum(monthSales, (sale) => saleMerchandiseCost(sale)) + Number(historicalMetrics?.merchandiseCost || 0);
+  let receivablesTotal = sum(state.sales.filter((sale) => sale.channel === "local"), (sale) => saleOutstandingDebt(sale))
     + sum(state.customers, customerInitialDebtOutstanding);
+  let todayPaymentRows = null;
+  if (cloudSummary) {
+    todayLocalRevenue = cloudSummary.todayRevenue;
+    todayOnlineRevenue = cloudSummary.todayOnlineRevenue;
+    monthlyRevenue = cloudSummary.monthRevenue + Number(historicalMetrics?.income || 0);
+    monthlyExpenses = cloudSummary.monthExpenses + Number(historicalMetrics?.expenseTotal || 0);
+    monthlyMerchandiseCost = cloudSummary.monthMerchandiseCost + Number(historicalMetrics?.merchandiseCost || 0);
+    receivablesTotal = cloudSummary.receivablesTotal;
+    todayPaymentRows = cloudSummary.todayPaymentMethods;
+  }
   document.getElementById("todayRevenue").textContent = money(todayLocalRevenue);
   document.getElementById("todayOnlineRevenue").textContent = money(todayOnlineRevenue);
   document.getElementById("monthRevenue").textContent = money(monthlyRevenue);
   document.getElementById("receivablesTotal").textContent = money(receivablesTotal);
   document.getElementById("monthResult").textContent = money(monthlyRevenue - monthlyExpenses - monthlyMerchandiseCost);
-  renderTodayPaymentSummary(todaySales.filter((sale) => sale.channel === "local"));
+  if (todayPaymentRows) renderTodayPaymentSummaryRows(todayPaymentRows);
+  else renderTodayPaymentSummary(todaySales.filter((sale) => sale.channel === "local"));
   renderMonthlyChart();
+}
+
+function renderTodayPaymentSummaryRows(rows = []) {
+  const normalizedRows = (rows || [])
+    .map((row) => ({
+      method: row.method || "sin-medio",
+      count: Number(row.count || 0),
+      total: Number(row.total || 0),
+    }))
+    .filter((row) => row.total > 0 || row.count > 0)
+    .sort((a, b) => b.total - a.total);
+  document.getElementById("todayPaymentTotal").textContent = money(sum(normalizedRows, (row) => row.total));
+  document.getElementById("todayPaymentSummary").innerHTML = normalizedRows.length
+    ? normalizedRows.map((row) => `
+      <div class="payment-summary-row">
+        <div>
+          <strong>${paymentMethodName(row.method)}</strong>
+          <small>${row.count} ${row.count === 1 ? "Venta" : "Ventas"}</small>
+        </div>
+        <span>${money(row.total)}</span>
+      </div>
+    `).join("")
+    : `<div class="empty-state">Todavía no hay Ventas Locales registradas hoy.</div>`;
 }
 
 function renderTodayPaymentSummary(todaySales) {
@@ -7888,19 +7996,7 @@ function renderTodayPaymentSummary(todaySales) {
     acc[method].total += saleInitialPaidAmount(sale);
     return acc;
   }, {});
-  const rows = Object.values(summary).sort((a, b) => b.total - a.total);
-  document.getElementById("todayPaymentTotal").textContent = money(sum(rows, (row) => row.total));
-  document.getElementById("todayPaymentSummary").innerHTML = rows.length
-    ? rows.map((row) => `
-      <div class="payment-summary-row">
-        <div>
-          <strong>${paymentMethodName(row.method)}</strong>
-          <small>${row.count} ${row.count === 1 ? "Venta" : "Ventas"}</small>
-        </div>
-        <span>${money(row.total)}</span>
-      </div>
-    `).join("")
-    : `<div class="empty-state">Todavía no hay Ventas Locales registradas hoy.</div>`;
+  renderTodayPaymentSummaryRows(Object.values(summary));
 }
 
 function renderMonthlyChart() {
