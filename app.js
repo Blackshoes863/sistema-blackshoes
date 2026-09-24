@@ -221,6 +221,9 @@ const unlockedExpenseAmounts = new Set();
 const cloudDashboardSummaryCache = new Map();
 const cloudDashboardSummaryLoads = new Map();
 const cloudDashboardSummaryFailures = new Map();
+const cloudSalesHistoryCache = new Map();
+const cloudSalesHistoryLoads = new Map();
+const cloudSalesHistoryFailures = new Map();
 
 function openConfirmModal({ title = "Confirmar accion", message = "", confirmText = "Confirmar", cancelText = "Cancelar", danger = false, onConfirm = null, onCancel = null }) {
   pendingConfirmAction = typeof onConfirm === "function" ? onConfirm : null;
@@ -1474,6 +1477,110 @@ function normalizeCloudSale(row = {}) {
   };
 }
 
+function mergeCloudSalesIntoState(rows = []) {
+  const normalized = (rows || []).map(normalizeCloudSale);
+  if (!normalized.length) return [];
+  const salesById = new Map((state.sales || []).map((sale) => [sale.id, sale]));
+  normalized.forEach((sale) => salesById.set(sale.id, { ...salesById.get(sale.id), ...sale }));
+  state.sales = [...salesById.values()].sort(salesHistorySort);
+  return normalized;
+}
+
+function salesHistoryPaymentMethodIds(payment = "all") {
+  if (!payment || payment === "all") return null;
+  const ids = state.paymentMethods
+    .filter((method) => paymentMethodName(method.id) === payment || method.name === payment)
+    .map((method) => method.id);
+  if (!ids.includes(payment)) ids.push(payment);
+  return ids;
+}
+
+function cloudSalesHistoryRequest(filters = state.salesHistoryFilters || {}, page = state.salesHistoryPage || 1) {
+  const safeFilters = { period: "all", from: "", to: "", order: "", payment: "all", ...filters };
+  const { from, to } = salesHistoryDateRange(safeFilters);
+  return {
+    order: String(safeFilters.order || "").trim(),
+    from: from || "",
+    to: to || "",
+    payment: safeFilters.payment || "all",
+    paymentMethods: salesHistoryPaymentMethodIds(safeFilters.payment || "all"),
+    page: Math.max(1, Number(page || 1)),
+    pageSize: SALES_HISTORY_PAGE_SIZE,
+  };
+}
+
+function cloudSalesHistoryKey(request) {
+  return JSON.stringify({
+    order: request.order,
+    from: request.from,
+    to: request.to,
+    payment: request.payment,
+    page: request.page,
+    pageSize: request.pageSize,
+  });
+}
+
+function cachedCloudSalesHistoryPage(filters = state.salesHistoryFilters || {}, page = state.salesHistoryPage || 1) {
+  return cloudSalesHistoryCache.get(cloudSalesHistoryKey(cloudSalesHistoryRequest(filters, page)));
+}
+
+async function loadCloudSalesHistoryPage(filters = state.salesHistoryFilters || {}, page = state.salesHistoryPage || 1, { force = false } = {}) {
+  if (!cloudEnabledWithSession()) return null;
+  const request = cloudSalesHistoryRequest(filters, page);
+  const key = cloudSalesHistoryKey(request);
+  if (!force && cloudSalesHistoryCache.has(key)) return cloudSalesHistoryCache.get(key);
+  if (cloudSalesHistoryLoads.has(key)) return cloudSalesHistoryLoads.get(key);
+  const recentFailureAt = cloudSalesHistoryFailures.get(key) || 0;
+  if (!force && Date.now() - recentFailureAt < 30000) return null;
+  const load = (async () => {
+    const { data, error } = await supabaseClient.rpc("list_sales_history_page", {
+      p_order_query: request.order,
+      p_from: request.from || null,
+      p_to: request.to || null,
+      p_payment_methods: request.paymentMethods,
+      p_page: request.page,
+      p_page_size: request.pageSize,
+    });
+    if (error) throw new Error(`historial de ventas: ${error.message}`);
+    const rows = mergeCloudSalesIntoState(data?.rows || []);
+    const result = {
+      rows,
+      totalCount: Number(data?.totalCount || 0),
+      page: Number(data?.page || request.page),
+      pageSize: Number(data?.pageSize || request.pageSize),
+      loadedAt: Date.now(),
+    };
+    cloudSalesHistoryCache.set(key, result);
+    cloudSalesHistoryFailures.delete(key);
+    return result;
+  })();
+  cloudSalesHistoryLoads.set(key, load);
+  try {
+    return await load;
+  } catch (error) {
+    cloudSalesHistoryFailures.set(key, Date.now());
+    console.warn("Cloud sales history failed", error);
+    return null;
+  } finally {
+    cloudSalesHistoryLoads.delete(key);
+  }
+}
+
+function requestCloudSalesHistoryPage(filters = state.salesHistoryFilters || {}, page = state.salesHistoryPage || 1) {
+  if (!cloudEnabledWithSession()) return;
+  const request = cloudSalesHistoryRequest(filters, page);
+  const key = cloudSalesHistoryKey(request);
+  if (cloudSalesHistoryCache.has(key) || cloudSalesHistoryLoads.has(key)) return;
+  loadCloudSalesHistoryPage(filters, page).then((result) => {
+    if (result && state.activeView === "salesHistory") renderSalesHistory();
+  });
+}
+
+function invalidateCloudSalesHistoryCache() {
+  cloudSalesHistoryCache.clear();
+  cloudSalesHistoryFailures.clear();
+}
+
 function normalizeCloudExpense(row = {}) {
   return {
     id: row.id,
@@ -1536,7 +1643,7 @@ function cloudModeCovers(currentMode, requestedMode) {
 }
 
 function cloudModeForView(viewId) {
-  return ["salesHistory", "customers", "expenses", "reports"].includes(viewId) ? "full" : "initial";
+  return ["customers", "expenses", "reports"].includes(viewId) ? "full" : "initial";
 }
 
 async function ensureCloudDataForView(viewId) {
@@ -1732,6 +1839,7 @@ function requestCloudDashboardSummary(monthKey = state.selectedMonth || currentM
 }
 
 async function loadCloudData({ mode = "initial", force = false } = {}) {
+  invalidateCloudSalesHistoryCache();
   await loadCloudBusinessSettings();
   await loadCloudProductCatalog();
   await loadCloudOperationalData({ mode, force });
@@ -8075,11 +8183,15 @@ function renderSalesHistory() {
   const table = document.getElementById("salesHistoryTable");
   if (!table) return;
   renderSalesHistoryFilters();
-  const sales = filteredSalesHistory().slice().sort(salesHistorySort);
-  const totalPages = Math.max(1, Math.ceil(sales.length / SALES_HISTORY_PAGE_SIZE));
+  requestCloudSalesHistoryPage(state.salesHistoryFilters, state.salesHistoryPage);
+  const cloudPage = cachedCloudSalesHistoryPage(state.salesHistoryFilters, state.salesHistoryPage);
+  const localSales = filteredSalesHistory().slice().sort(salesHistorySort);
+  const totalItems = cloudPage ? cloudPage.totalCount : localSales.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / SALES_HISTORY_PAGE_SIZE));
   const current = Math.min(Math.max(1, Number(state.salesHistoryPage || 1)), totalPages);
-  const start = (current - 1) * SALES_HISTORY_PAGE_SIZE;
-  const pageRows = sales.slice(start, start + SALES_HISTORY_PAGE_SIZE);
+  const pageRows = cloudPage && cloudPage.page === current
+    ? cloudPage.rows
+    : localSales.slice((current - 1) * SALES_HISTORY_PAGE_SIZE, current * SALES_HISTORY_PAGE_SIZE);
   state.salesHistoryPage = current;
   table.innerHTML = pageRows.map((sale) => {
     const count = saleItemCount(sale);
@@ -8106,7 +8218,7 @@ function renderSalesHistory() {
       </tr>
     `;
   }).join("") || `<tr><td colspan="7">Todavía no hay Ventas registradas.</td></tr>`;
-  document.getElementById("salesHistoryPagination").innerHTML = salesHistoryPaginationControls(current, totalPages, sales.length);
+  document.getElementById("salesHistoryPagination").innerHTML = salesHistoryPaginationControls(current, totalPages, totalItems);
 }
 
 function renderSalesHistoryFilters() {
