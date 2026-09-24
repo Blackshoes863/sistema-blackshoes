@@ -227,6 +227,9 @@ const cloudSalesHistoryFailures = new Map();
 const cloudProductsCache = new Map();
 const cloudProductsLoads = new Map();
 const cloudProductsFailures = new Map();
+const cloudCustomersCache = new Map();
+const cloudCustomersLoads = new Map();
+const cloudCustomersFailures = new Map();
 const cloudExpensesCache = new Map();
 const cloudExpensesLoads = new Map();
 const cloudExpensesFailures = new Map();
@@ -1412,6 +1415,8 @@ function cloudTimestampFromDate(value) {
 }
 
 function normalizeCloudCustomer(row = {}, initialPayments = []) {
+  const stats = row.stats || {};
+  const hasStats = Boolean(row.stats || "sales_count" in row || "total_amount" in row || "debt_amount" in row);
   return {
     id: row.id,
     name: normalizeCustomerName(row.name || ""),
@@ -1421,9 +1426,29 @@ function normalizeCloudCustomer(row = {}, initialPayments = []) {
     notes: row.notes || "",
     initialDebt: Math.max(0, Number(row.initial_debt || 0)),
     initialDebtPayments: normalizeSaleDebtPayments(initialPayments),
+    cloudStats: {
+      available: hasStats,
+      total: Number(stats.total || row.total_amount || 0),
+      salesCount: Number(stats.sales_count || row.sales_count || 0),
+      localTotal: Number(stats.local_total || stats.total || row.total_amount || 0),
+      webTotal: Number(stats.web_total || 0),
+      lastDate: stats.last_date || row.last_sale_date || "",
+      ticket: Number(stats.ticket || row.ticket || 0),
+      workshopCount: Number(stats.workshop_count || 0),
+      debt: Number(stats.debt || row.debt_amount || 0),
+    },
     createdAt: row.created_at || "",
     updatedAt: row.updated_at || row.created_at || "",
   };
+}
+
+function mergeCloudCustomersIntoState(rows = []) {
+  const normalized = (rows || []).map((row) => normalizeCloudCustomer(row, row.initial_payments || []));
+  if (!normalized.length) return [];
+  const customersById = new Map((state.customers || []).map((customer) => [customer.id, customer]));
+  normalized.forEach((customer) => customersById.set(customer.id, { ...customersById.get(customer.id), ...customer }));
+  state.customers = [...customersById.values()].sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "es", { sensitivity: "base" }));
+  return normalized;
 }
 
 function normalizeCloudPayment(row = {}) {
@@ -1479,7 +1504,8 @@ function normalizeCloudSale(row = {}) {
     items,
     reference: "",
     customerId: row.customer_id || "",
-    customerName: "",
+    customerName: row.customers?.name || "",
+    customerDni: normalizeCustomerDni(row.customers?.dni || ""),
     notes: row.notes || "",
     createdAt: row.created_at || row.sold_at || "",
     updatedAt: row.created_at || row.sold_at || "",
@@ -1652,7 +1678,7 @@ function cloudModeCovers(currentMode, requestedMode) {
 }
 
 function cloudModeForView(viewId) {
-  return ["customers", "reports"].includes(viewId) ? "full" : "initial";
+  return ["reports"].includes(viewId) ? "full" : "initial";
 }
 
 async function ensureCloudDataForView(viewId) {
@@ -1681,7 +1707,7 @@ async function loadCloudOperationalData({ mode = "initial", force = true } = {})
   cloudOperationalLoadPromise = (async () => {
     const salesQuery = supabaseClient
       .from("sales")
-      .select("*,sale_items(*),payments(*)")
+      .select("*,customers(id,name,dni,phone,city),sale_items(*),payments(*)")
       .is("archived_at", null)
       .order("sold_at", { ascending: false });
 
@@ -1702,32 +1728,17 @@ async function loadCloudOperationalData({ mode = "initial", force = true } = {})
       ? expensesQuery
       : expensesQuery.gte("expense_at", cloudSinceTimestamp(expenseDays));
 
-  const [{ data: customers, error: customersError }, { data: sales, error: salesError }, { data: expenses, error: expensesError }, { data: stock, error: stockError }, { data: initialPayments, error: paymentsError }] = await Promise.all([
-    supabaseClient.from("customers").select("*").is("archived_at", null).order("created_at", { ascending: false }),
+  const [{ data: sales, error: salesError }, { data: expenses, error: expensesError }, { data: stock, error: stockError }] = await Promise.all([
     scopedSalesQuery,
     scopedExpensesQuery,
     supabaseClient.from("stock_movements").select("*").order("created_at", { ascending: false }).limit(STOCK_HISTORY_LIMIT),
-    supabaseClient.from("payments").select("*").is("sale_id", null).order("paid_at", { ascending: false }),
   ]);
-  if (customersError) throw new Error(`clientes: ${customersError.message}`);
   if (salesError) throw new Error(`ventas: ${salesError.message}`);
   if (expensesError) throw new Error(`gastos: ${expensesError.message}`);
   if (stockError) throw new Error(`stock: ${stockError.message}`);
-  if (paymentsError) throw new Error(`pagos: ${paymentsError.message}`);
-
-  const initialPaymentsByCustomer = new Map();
-  (initialPayments || []).forEach((payment) => {
-    if (!payment.customer_id) return;
-    const list = initialPaymentsByCustomer.get(payment.customer_id) || [];
-    list.push(normalizeCloudPayment(payment));
-    initialPaymentsByCustomer.set(payment.customer_id, list);
-  });
-  state.customers = (customers || []).map((customer) => normalizeCloudCustomer(customer, initialPaymentsByCustomer.get(customer.id) || []));
-  const customersById = new Map(state.customers.map((customer) => [customer.id, customer]));
   state.sales = (sales || []).map(normalizeCloudSale).map((sale) => ({
     ...sale,
-    customerName: customersById.get(sale.customerId)?.name || "",
-    reference: customersById.get(sale.customerId)?.name || "",
+    reference: sale.customerName || "",
   }));
   state.expenses = (expenses || [])
     .filter((expense) => expense.category !== "CompraMercaderia")
@@ -1850,10 +1861,12 @@ function requestCloudDashboardSummary(monthKey = state.selectedMonth || currentM
 async function loadCloudData({ mode = "initial", force = false } = {}) {
   invalidateCloudSalesHistoryCache();
   invalidateCloudProductsCache();
+  invalidateCloudCustomersCache();
   invalidateCloudExpensesCache();
   await loadCloudBusinessSettings();
   await loadCloudProductCatalog();
   await loadCloudProductsPage(state.productFilters, state.productPage || 1, { force: true });
+  await loadCloudCustomersPage(state.customerFilters, state.customerPage || 1, { force: true });
   await loadCloudOperationalData({ mode, force });
   await loadCloudDashboardSummary(state.selectedMonth || currentMonthKey(), { force: true });
   persistStateLocalOnly();
@@ -1883,6 +1896,7 @@ async function ensureCloudCustomer(customer) {
   if (!customer || !cloudEnabledWithSession()) return customer || null;
   if (isUuid(customer.id)) return customer;
   const saved = await saveCloudCustomerRecord(null, customer);
+  invalidateCloudCustomersCache();
   const previousId = customer.id;
   Object.assign(customer, saved);
   state.carts.forEach((cart) => {
@@ -8655,6 +8669,18 @@ function customerDebtTotal(customer) {
 }
 
 function customerStats(customer) {
+  if (customer?.cloudStats?.available) {
+    return {
+      total: Number(customer.cloudStats.total || 0),
+      salesCount: Number(customer.cloudStats.salesCount || 0),
+      localTotal: Number(customer.cloudStats.localTotal || customer.cloudStats.total || 0),
+      webTotal: Number(customer.cloudStats.webTotal || 0),
+      lastDate: customer.cloudStats.lastDate || "",
+      ticket: Number(customer.cloudStats.ticket || 0),
+      workshopCount: Number(customer.cloudStats.workshopCount || 0),
+      debt: Number(customer.cloudStats.debt || 0),
+    };
+  }
   const sales = salesForCustomer(customer);
   const localSales = sales.filter((sale) => sale.channel === "local");
   const webSales = sales.filter((sale) => sale.channel === "online");
@@ -8672,6 +8698,88 @@ function customerStats(customer) {
     workshopCount: workshopOrdersForCustomer(customer).length,
     debt: customerDebtTotal(customer),
   };
+}
+
+function cloudCustomersRequest(filters = state.customerFilters || {}, page = state.customerPage || 1) {
+  const safeFilters = { query: "", sort: "alpha", ...(filters || {}) };
+  return {
+    query: String(safeFilters.query || "").trim(),
+    sort: safeFilters.sort || "alpha",
+    page: Math.max(1, Number(page || 1)),
+    pageSize: CUSTOMER_PAGE_SIZE,
+  };
+}
+
+function cloudCustomersKey(request) {
+  return JSON.stringify({
+    query: request.query,
+    sort: request.sort,
+    page: request.page,
+    pageSize: request.pageSize,
+  });
+}
+
+function cachedCloudCustomersPage(filters = state.customerFilters || {}, page = state.customerPage || 1) {
+  return cloudCustomersCache.get(cloudCustomersKey(cloudCustomersRequest(filters, page)));
+}
+
+async function loadCloudCustomersPage(filters = state.customerFilters || {}, page = state.customerPage || 1, { force = false } = {}) {
+  if (!cloudEnabledWithSession()) return null;
+  const request = cloudCustomersRequest(filters, page);
+  const key = cloudCustomersKey(request);
+  if (!force && cloudCustomersCache.has(key)) return cloudCustomersCache.get(key);
+  if (cloudCustomersLoads.has(key)) return cloudCustomersLoads.get(key);
+  const recentFailureAt = cloudCustomersFailures.get(key) || 0;
+  if (!force && Date.now() - recentFailureAt < 30000) return null;
+  const load = (async () => {
+    const { data, error } = await supabaseClient.rpc("list_customers_page", {
+      p_query: request.query,
+      p_sort: request.sort,
+      p_page: request.page,
+      p_page_size: request.pageSize,
+    });
+    if (error) throw new Error(`clientes: ${error.message}`);
+    const rows = mergeCloudCustomersIntoState(data?.rows || []);
+    const result = {
+      rows,
+      totalCount: Number(data?.totalCount || 0),
+      activeCount: Number(data?.activeCount || 0),
+      totalAmount: Number(data?.totalAmount || 0),
+      debtAmount: Number(data?.debtAmount || 0),
+      page: Number(data?.page || request.page),
+      pageSize: Number(data?.pageSize || request.pageSize),
+      loadedAt: Date.now(),
+    };
+    cloudCustomersCache.set(key, result);
+    cloudCustomersFailures.delete(key);
+    persistStateLocalOnly();
+    return result;
+  })();
+  cloudCustomersLoads.set(key, load);
+  try {
+    return await load;
+  } catch (error) {
+    cloudCustomersFailures.set(key, Date.now());
+    console.warn("Cloud customers failed", error);
+    return null;
+  } finally {
+    cloudCustomersLoads.delete(key);
+  }
+}
+
+function requestCloudCustomersPage(filters = state.customerFilters || {}, page = state.customerPage || 1) {
+  if (!cloudEnabledWithSession()) return;
+  const request = cloudCustomersRequest(filters, page);
+  const key = cloudCustomersKey(request);
+  if (cloudCustomersCache.has(key) || cloudCustomersLoads.has(key)) return;
+  loadCloudCustomersPage(filters, page).then((result) => {
+    if (result && state.activeView === "customers") renderCustomers();
+  });
+}
+
+function invalidateCloudCustomersCache() {
+  cloudCustomersCache.clear();
+  cloudCustomersFailures.clear();
 }
 
 function filteredCustomers() {
@@ -8755,7 +8863,8 @@ async function submitCustomerEditModal(form) {
       }
       const saved = await saveCloudCustomerRecord(customer, payload);
       Object.assign(customer, saved);
-      await loadCloudOperationalData();
+      invalidateCloudCustomersCache();
+      await loadCloudCustomersPage(state.customerFilters, state.customerPage || 1, { force: true });
     } else {
       Object.assign(customer, payload);
     }
@@ -8788,8 +8897,9 @@ function deleteCustomer(customerId) {
             return;
           }
           await archiveCloudRecord("customer", customerId);
+          invalidateCloudCustomersCache();
           logActivity("customer", "Archivo cliente", customer.name);
-          await loadCloudOperationalData();
+          await loadCloudCustomersPage(state.customerFilters, state.customerPage || 1, { force: true });
           clearCustomerForm();
           saveState();
           render();
@@ -8826,13 +8936,20 @@ function renderCustomers() {
   if (search) search.value = state.customerFilters?.query || "";
   if (sortFilter) sortFilter.value = state.customerFilters?.sort || "alpha";
   if (province) province.innerHTML = customerProvinceOptions(province.value);
+  requestCloudCustomersPage(state.customerFilters, state.customerPage);
+  const cloudPage = cachedCloudCustomersPage(state.customerFilters, state.customerPage);
   const customers = filteredCustomers();
-  const page = pageItemsBySize(customers, state.customerPage, CUSTOMER_PAGE_SIZE);
-  state.customerPage = page.current;
-  const totalCustomers = state.customers.length;
-  const activeCustomers = state.customers.filter((customer) => customerStats(customer).salesCount > 0).length;
-  const totalSales = sum(state.customers, (customer) => customerStats(customer).total);
-  const totalDebt = sum(state.customers, (customer) => customerStats(customer).debt);
+  const totalItems = cloudPage ? cloudPage.totalCount : customers.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / CUSTOMER_PAGE_SIZE));
+  const current = Math.min(Math.max(1, Number(state.customerPage || 1)), totalPages);
+  const pageRows = cloudPage && cloudPage.page === current
+    ? cloudPage.rows
+    : customers.slice((current - 1) * CUSTOMER_PAGE_SIZE, current * CUSTOMER_PAGE_SIZE);
+  state.customerPage = current;
+  const totalCustomers = cloudPage ? cloudPage.totalCount : state.customers.length;
+  const activeCustomers = cloudPage ? cloudPage.activeCount : state.customers.filter((customer) => customerStats(customer).salesCount > 0).length;
+  const totalSales = cloudPage ? cloudPage.totalAmount : sum(state.customers, (customer) => customerStats(customer).total);
+  const totalDebt = cloudPage ? cloudPage.debtAmount : sum(state.customers, (customer) => customerStats(customer).debt);
   document.getElementById("customerSummary").innerHTML = `
     <div class="summary-row"><span>Clientes</span><strong>${totalCustomers}</strong></div>
     <div class="summary-row"><span>Con Compras</span><strong>${activeCustomers}</strong></div>
@@ -8850,7 +8967,7 @@ function renderCustomers() {
       <th class="row-actions-head" aria-label="Acciones"></th>
     `;
   }
-  table.innerHTML = page.rows.map((customer) => {
+  table.innerHTML = pageRows.map((customer) => {
     const stats = customerStats(customer);
     const note = String(customer.notes || "").trim();
     return `
@@ -8871,9 +8988,9 @@ function renderCustomers() {
         </td>
       </tr>
     `;
-  }).join("") || `<tr><td colspan="6">Todavía no hay Clientes para esos Filtros.</td></tr>`;
+  }).join("") || `<tr><td colspan="6">${cloudEnabledWithSession() && !cloudPage ? "Cargando clientes..." : "Todavía no hay Clientes para esos Filtros."}</td></tr>`;
   const pagination = document.getElementById("customersPagination");
-  if (pagination) pagination.innerHTML = sizedPaginationControls("customers", page.current, page.totalPages, customers.length, CUSTOMER_PAGE_SIZE, "clientes");
+  if (pagination) pagination.innerHTML = sizedPaginationControls("customers", current, totalPages, totalItems, CUSTOMER_PAGE_SIZE, "clientes");
 }
 
 function openCustomerInfoModal(customerId) {
@@ -9003,6 +9120,9 @@ async function registerCustomerDebtPayment(form) {
         method: data.paymentMethod || "efectivo",
         note: isInitialDebt ? (data.notes || "Pago de deuda inicial") : (data.notes || `Pago ${saleOrder(sale)}`),
       });
+      invalidateCloudCustomersCache();
+      invalidateCloudSalesHistoryCache();
+      await loadCloudCustomersPage(state.customerFilters, state.customerPage || 1, { force: true });
       await loadCloudOperationalData();
       form.reset();
       form.elements.customerId.value = cloudCustomer.id;
@@ -12395,7 +12515,8 @@ document.getElementById("customerForm").addEventListener("submit", async (event)
       const saved = await saveCloudCustomerRecord(existing, payload);
       if (existing) Object.assign(existing, saved);
       else state.customers.push(saved);
-      await loadCloudOperationalData();
+      invalidateCloudCustomersCache();
+      await loadCloudCustomersPage(state.customerFilters, state.customerPage || 1, { force: true });
     } else if (existing) {
       Object.assign(existing, payload);
     } else {
