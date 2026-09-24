@@ -1805,32 +1805,25 @@ async function saveCloudStockEntry(entry) {
     ? Number(entry.unitCost)
     : Number(product.cost || 0);
   const note = `${entry.note || "Reposicion de Mercaderia"}${entry.size ? ` - Talle ${entry.size}` : ""}`;
-  const { error } = await supabaseClient.rpc("register_stock_movement", {
-    p_operation_id: cloudOperationId(),
+  const shouldUpdateCost = entry.unitCost !== null && entry.unitCost !== undefined && Number.isFinite(Number(entry.unitCost));
+  const nextCost = shouldUpdateCost ? Number(entry.unitCost) : null;
+  const nextPrice = shouldUpdateCost && entry.priceAction === "recalculate"
+    ? Math.round(nextCost + nextCost * (Number(product.margin || 0) / 100))
+    : null;
+  const { error } = await supabaseClient.rpc("register_purchase_stock", {
+    p_operation_id: entry.operationId || cloudOperationId(),
     p_variant_id: variant.id,
-    p_quantity_delta: quantity,
-    p_movement_type: "purchase",
+    p_quantity: quantity,
     p_unit_cost: unitCost,
-    p_note: note,
+    p_stock_note: note,
+    p_expense_at: cloudTimestampFromDate(entry.date),
+    p_expense_note: stockMovementPurchaseNote(quantity, unitCost, note),
+    p_payment_method: "",
+    p_update_product_cost: shouldUpdateCost,
+    p_next_cost: nextCost,
+    p_next_price: nextPrice,
   });
   if (error) throw new Error(`cargar stock: ${error.message}`);
-  if (entry.unitCost !== null && entry.unitCost !== undefined && Number.isFinite(Number(entry.unitCost))) {
-    const nextCost = Number(entry.unitCost);
-    const nextPrice = entry.priceAction === "recalculate"
-      ? Math.round(nextCost + nextCost * (Number(product.margin || 0) / 100))
-      : Number(product.price || 0);
-    const { error: productError } = await supabaseClient
-      .from("products")
-      .update({ cost: nextCost, price: nextPrice, updated_by: supabaseSession.user.id })
-      .eq("id", product.id);
-    if (productError) throw new Error(`actualizar costo/precio: ${productError.message}`);
-  }
-  await saveCloudExpenseRecord({
-    date: entry.date,
-    concept: stockMovementPurchaseNote(quantity, unitCost, note),
-    category: "CompraMercaderia",
-    amount: Math.round(unitCost * quantity),
-  });
 }
 
 async function archiveCloudRecord(kind, id) {
@@ -6035,6 +6028,7 @@ function addStockEntryDraftFromForm(form) {
   }
   if (quantity <= 0) return false;
   stockEntryDraft.push({
+    operationId: cloudOperationId(),
     productId: product.id,
     productCode: product.code,
     productName: product.description,
