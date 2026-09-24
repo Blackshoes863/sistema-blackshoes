@@ -1278,30 +1278,48 @@ function storagePathFromProductImageUrl(url) {
 async function prepareCloudProductImages(productId, urls = [], productName = "") {
   const bucket = supabaseClient.storage.from("product-images");
   const savedImages = [];
-  for (const [index, url] of normalizeProductImageUrls(urls).entries()) {
-    let storagePath = storagePathFromProductImageUrl(url);
-    let publicUrl = /^https?:\/\//i.test(String(url || "")) ? url : "";
-    if (isDataImageUrl(url)) {
-      const extension = imageExtensionFromDataUrl(url);
-      const path = `products/${productId}/${Date.now()}-${index + 1}-${Math.floor(Math.random() * 100000)}.${extension}`;
-      const blob = await dataImageUrlToBlob(url);
-      const { error: uploadError } = await bucket.upload(path, blob, {
-        contentType: blob.type || `image/${extension}`,
-        cacheControl: "31536000",
-        upsert: false,
+  try {
+    for (const [index, url] of normalizeProductImageUrls(urls).entries()) {
+      let storagePath = storagePathFromProductImageUrl(url);
+      let publicUrl = /^https?:\/\//i.test(String(url || "")) ? url : "";
+      let uploaded = false;
+      if (isDataImageUrl(url)) {
+        const extension = imageExtensionFromDataUrl(url);
+        const path = `products/${productId}/${Date.now()}-${index + 1}-${Math.floor(Math.random() * 100000)}.${extension}`;
+        const blob = await dataImageUrlToBlob(url);
+        const { error: uploadError } = await bucket.upload(path, blob, {
+          contentType: blob.type || `image/${extension}`,
+          cacheControl: "31536000",
+          upsert: false,
+        });
+        if (uploadError) throw new Error(`subir imagen: ${uploadError.message}`);
+        storagePath = path;
+        publicUrl = bucket.getPublicUrl(path).data?.publicUrl || path;
+        uploaded = true;
+      }
+      savedImages.push({
+        storage_path: storagePath || publicUrl,
+        public_url: publicUrl || storagePath,
+        alt_text: productName,
+        sort_order: index + 1,
+        uploaded,
       });
-      if (uploadError) throw new Error(`subir imagen: ${uploadError.message}`);
-      storagePath = path;
-      publicUrl = bucket.getPublicUrl(path).data?.publicUrl || path;
     }
-    savedImages.push({
-      storage_path: storagePath || publicUrl,
-      public_url: publicUrl || storagePath,
-      alt_text: productName,
-      sort_order: index + 1,
-    });
+  } catch (error) {
+    await cleanupUploadedCloudProductImages(savedImages);
+    throw error;
   }
   return savedImages;
+}
+
+async function cleanupUploadedCloudProductImages(images = []) {
+  const paths = normalizeProductImageUrls(images
+    .filter((image) => image.uploaded)
+    .map((image) => image.storage_path)
+    .filter((path) => path && !/^https?:\/\//i.test(path)));
+  if (!paths.length || !cloudEnabledWithSession()) return;
+  const { error } = await supabaseClient.storage.from("product-images").remove(paths);
+  if (error) console.warn("Cloud product image cleanup failed", error);
 }
 
 async function saveCloudProductRecord(existing, product) {
@@ -1334,14 +1352,27 @@ async function saveCloudProductRecord(existing, product) {
       sort_order: index + 1,
     }))
     : [];
-  const { data, error } = await supabaseClient.rpc("save_product_with_assets", {
-    p_operation_id: cloudOperationId(),
-    p_product_id: productId,
-    p_product: productPayload,
-    p_variants: variantsPayload,
-    p_images: imageRows,
-  });
-  if (error) throw new Error(`guardar producto: ${error.message}`);
+  const imagesPayload = imageRows.map(({ uploaded, ...image }) => image);
+  let data;
+  let error;
+  try {
+    const response = await supabaseClient.rpc("save_product_with_assets", {
+      p_operation_id: cloudOperationId(),
+      p_product_id: productId,
+      p_product: productPayload,
+      p_variants: variantsPayload,
+      p_images: imagesPayload,
+    });
+    data = response.data;
+    error = response.error;
+  } catch (requestError) {
+    await cleanupUploadedCloudProductImages(imageRows);
+    throw requestError;
+  }
+  if (error) {
+    await cleanupUploadedCloudProductImages(imageRows);
+    throw new Error(`guardar producto: ${error.message}`);
+  }
   const imageUrls = normalizeProductImageUrls(data?.imageUrls || imageRows.map((image) => image.public_url || image.storage_path));
   return { ...product, id: data?.id || productId, slug: data?.slug || productPayload.slug, imageUrls, images: imageUrls };
 }
