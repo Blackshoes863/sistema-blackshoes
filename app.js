@@ -221,6 +221,9 @@ const unlockedExpenseAmounts = new Set();
 const cloudDashboardSummaryCache = new Map();
 const cloudDashboardSummaryLoads = new Map();
 const cloudDashboardSummaryFailures = new Map();
+const cloudReportSummaryCache = new Map();
+const cloudReportSummaryLoads = new Map();
+const cloudReportSummaryFailures = new Map();
 const cloudSalesHistoryCache = new Map();
 const cloudSalesHistoryLoads = new Map();
 const cloudSalesHistoryFailures = new Map();
@@ -1614,6 +1617,7 @@ function requestCloudSalesHistoryPage(filters = state.salesHistoryFilters || {},
 function invalidateCloudSalesHistoryCache() {
   cloudSalesHistoryCache.clear();
   cloudSalesHistoryFailures.clear();
+  invalidateCloudReportSummaryCache();
 }
 
 function normalizeCloudExpense(row = {}) {
@@ -7466,6 +7470,7 @@ function invalidateCloudExpensesCache() {
   cloudExpensesCache.clear();
   cloudExpensesFailures.clear();
   cloudExpenseRowsByKey.clear();
+  invalidateCloudReportSummaryCache();
 }
 
 function expenseEntryByKey(key) {
@@ -7585,6 +7590,104 @@ function inPeriod(date) {
   const current = new Date(`${date}T00:00:00`);
   const range = reportPeriodRange();
   return current >= range.from && (!range.to || current <= range.to);
+}
+
+function reportPeriodRequest() {
+  const range = reportPeriodRange();
+  const from = localIsoDate(range.from);
+  const to = range.to ? localIsoDate(range.to) : todayIso();
+  return {
+    from,
+    to,
+    scope: state.reportScope || "total",
+    period: state.reportPeriod || "month",
+  };
+}
+
+function reportSummaryKey(request = reportPeriodRequest()) {
+  return JSON.stringify(request);
+}
+
+function normalizeCloudReportSummary(data = {}) {
+  return {
+    salesCount: Number(data.salesCount || 0),
+    income: Number(data.income || 0),
+    realIncome: Number(data.realIncome || data.income || 0),
+    localIncome: Number(data.localIncome || 0),
+    webInsumos: Number(data.webInsumos || 0),
+    webAccesorios: Number(data.webAccesorios || 0),
+    shipping: Number(data.shipping || 0),
+    fixedExpenses: Number(data.fixedExpenses || 0),
+    variableExpenses: Number(data.variableExpenses || 0),
+    expenseTotal: Number(data.expenseTotal || 0),
+    merchandiseCost: Number(data.merchandiseCost || 0),
+    margin: Number(data.margin || 0),
+    ticket: Number(data.ticket || 0),
+    categories: data.categories || {},
+    subcategories: data.subcategories || {},
+    subcategoryCategories: data.subcategoryCategories || {},
+    provinces: data.provinces || {},
+    payments: data.payments || {},
+    expenseDetails: data.expenseDetails || {},
+    trend: Array.isArray(data.trend) ? data.trend.map((entry) => ({
+      key: entry.key,
+      income: Number(entry.income || 0),
+      costs: Number(entry.costs || 0),
+      margin: Number(entry.margin || 0),
+      marginRate: Number(entry.marginRate || 0),
+    })) : [],
+    loadedAt: Date.now(),
+  };
+}
+
+function cachedCloudReportSummary() {
+  return cloudReportSummaryCache.get(reportSummaryKey(reportPeriodRequest()));
+}
+
+async function loadCloudReportSummary({ force = false } = {}) {
+  if (!cloudEnabledWithSession()) return null;
+  const request = reportPeriodRequest();
+  const key = reportSummaryKey(request);
+  if (!force && cloudReportSummaryCache.has(key)) return cloudReportSummaryCache.get(key);
+  if (cloudReportSummaryLoads.has(key)) return cloudReportSummaryLoads.get(key);
+  const recentFailureAt = cloudReportSummaryFailures.get(key) || 0;
+  if (!force && Date.now() - recentFailureAt < 30000) return null;
+  const load = (async () => {
+    const { data, error } = await supabaseClient.rpc("get_report_summary", {
+      p_from: request.from,
+      p_to: request.to,
+      p_scope: request.scope,
+    });
+    if (error) throw new Error(`estadisticas: ${error.message}`);
+    const summary = normalizeCloudReportSummary(data);
+    cloudReportSummaryCache.set(key, summary);
+    cloudReportSummaryFailures.delete(key);
+    return summary;
+  })();
+  cloudReportSummaryLoads.set(key, load);
+  try {
+    return await load;
+  } catch (error) {
+    cloudReportSummaryFailures.set(key, Date.now());
+    console.warn("Cloud report summary failed", error);
+    return null;
+  } finally {
+    cloudReportSummaryLoads.delete(key);
+  }
+}
+
+function requestCloudReportSummary() {
+  if (!cloudEnabledWithSession()) return;
+  const key = reportSummaryKey(reportPeriodRequest());
+  if (cloudReportSummaryCache.has(key) || cloudReportSummaryLoads.has(key)) return;
+  loadCloudReportSummary().then((summary) => {
+    if (summary && state.activeView === "reports") renderReports();
+  });
+}
+
+function invalidateCloudReportSummaryCache() {
+  cloudReportSummaryCache.clear();
+  cloudReportSummaryFailures.clear();
 }
 
 function sum(list, selector) {
@@ -10916,8 +11019,115 @@ function renderReportPeriodControls() {
   if (marginTrendOrder) marginTrendOrder.value = state.marginTrendOrder || "chronological";
 }
 
+function renderCloudMarginTrend(summary) {
+  const panel = document.getElementById("marginTrendPanel");
+  const chart = document.getElementById("marginTrendChart");
+  const averages = document.getElementById("marginTrendAverages");
+  if (!panel || !chart) return;
+  const visible = ["year", "all", "custom"].includes(state.reportPeriod);
+  panel.classList.toggle("is-hidden", !visible);
+  if (!visible) {
+    chart.innerHTML = "";
+    if (averages) averages.innerHTML = "";
+    return;
+  }
+  const metrics = sortTrendMetrics(summary.trend || []);
+  const maxValue = Math.max(1, ...metrics.flatMap((entry) => [entry.income, entry.costs, Math.abs(entry.margin)]));
+  if (!metrics.length) {
+    chart.innerHTML = `<div class="empty-state">Sin Datos para este Período.</div>`;
+    if (averages) averages.innerHTML = "";
+    return;
+  }
+  const average = {
+    income: sum(metrics, (entry) => entry.income) / metrics.length,
+    costs: sum(metrics, (entry) => entry.costs) / metrics.length,
+    margin: sum(metrics, (entry) => entry.margin) / metrics.length,
+  };
+  if (averages) {
+    const negativeAverage = average.margin < 0;
+    averages.innerHTML = `
+      <span class="trend-average-pill sales"><i></i>Prom. ventas: ${trendMoney(average.income)}</span>
+      <span class="trend-average-pill expenses"><i></i>Prom. gastos: ${trendMoney(average.costs)}</span>
+      <span class="trend-average-pill margin ${negativeAverage ? "negative" : ""}"><i></i>Prom. margen: ${trendMoney(average.margin)}</span>
+    `;
+  }
+  const labelSpace = 78;
+  const barHeight = 142;
+  const averageLine = (key, value) => {
+    const bottom = labelSpace + (Math.abs(value) / maxValue) * barHeight;
+    const negative = key === "margin" && value < 0;
+    return `<div class="trend-average-line ${key} ${negative ? "negative" : ""}" style="bottom:${bottom}px"></div>`;
+  };
+  const averageLines = [
+    averageLine("sales", average.income),
+    averageLine("expenses", average.costs),
+    averageLine("margin", average.margin),
+  ].join("");
+  chart.innerHTML = averageLines + metrics.map((entry) => {
+    const salesHeight = Math.max(5, entry.income / maxValue * 100);
+    const expensesHeight = Math.max(5, entry.costs / maxValue * 100);
+    const marginHeight = Math.max(5, Math.abs(entry.margin) / maxValue * 100);
+    const negative = entry.margin < 0;
+    return `
+      <div class="trend-month" title="${monthLabel(entry.key)} | Ventas: ${money(entry.income)} | Gastos: ${money(entry.costs)} | Margen: ${signedMoney(entry.margin)}">
+        <div class="trend-bars">
+          <span class="trend-bar sales" style="height:${salesHeight}%"></span>
+          <span class="trend-bar expenses" style="height:${expensesHeight}%"></span>
+          <span class="trend-bar margin ${negative ? "negative" : ""}" style="height:${marginHeight}%"></span>
+        </div>
+        <strong class="trend-value sales">V ${trendMoney(entry.income)}</strong>
+        <strong class="trend-value expenses">G ${trendMoney(entry.costs)}</strong>
+        <strong class="trend-value margin ${negative ? "negative" : ""}">M ${trendMoney(entry.margin)}</strong>
+        <span class="trend-percent ${negative ? "negative" : ""}">${entry.marginRate.toLocaleString("es-AR", { maximumFractionDigits: 1 })}%</span>
+        <small>${shortMonthLabel(entry.key)}</small>
+      </div>
+    `;
+  }).join("");
+}
+
+function renderCloudReportSummary(summary) {
+  const salesCounter = document.getElementById("reportSalesCounter");
+  if (salesCounter) {
+    const salesCount = Number(summary.salesCount || 0);
+    salesCounter.textContent = `${salesCount} ${salesCount === 1 ? "venta" : "ventas"} en el periodo`;
+  }
+  const incomeSplit = state.reportScope === "total"
+    ? { local: summary.localIncome, insumos: summary.webInsumos, accesorios: summary.webAccesorios }
+    : state.reportScope === "web"
+      ? { insumos: summary.webInsumos, accesorios: summary.webAccesorios }
+      : { local: summary.income };
+  document.getElementById("reportIncome").textContent = money(summary.income);
+  const shippingNode = document.getElementById("reportShipping");
+  if (shippingNode) shippingNode.textContent = money(summary.shipping);
+  document.getElementById("reportExpenses").textContent = money(summary.expenseTotal);
+  document.getElementById("reportPurchases").textContent = money(summary.merchandiseCost);
+  const marginNode = document.getElementById("reportMargin");
+  if (marginNode) {
+    marginNode.textContent = signedMoney(summary.margin);
+    marginNode.classList.toggle("negative", summary.margin < 0);
+    marginNode.classList.toggle("positive", summary.margin >= 0);
+  }
+  document.getElementById("reportTicket").textContent = money(summary.ticket);
+  renderWaterfall(summary.income, summary.fixedExpenses, summary.variableExpenses, summary.merchandiseCost, incomeSplit);
+  renderCloudMarginTrend(summary);
+  renderBarList("categoryChart", summary.categories, "art.", REPORT_PREVIEW_LIMIT);
+  renderBarList("subcategoryChart", summary.subcategories, "art.", REPORT_PREVIEW_LIMIT, { metaLabels: summary.subcategoryCategories });
+  renderAmountCountList("provinceChart", summary.provinces, REPORT_PREVIEW_LIMIT, "count");
+  renderAmountCountList("paymentChart", summary.payments, REPORT_PREVIEW_LIMIT);
+  renderAmountCountList("reportExpenseDetails", summary.expenseDetails, REPORT_PREVIEW_LIMIT, "amount", {
+    countSingular: "registro",
+    countPlural: "registros",
+  });
+}
+
 function renderReports() {
   renderReportPeriodControls();
+  requestCloudReportSummary();
+  const cloudSummary = cachedCloudReportSummary();
+  if (cloudSummary) {
+    renderCloudReportSummary(cloudSummary);
+    return;
+  }
   const periodSales = state.sales.filter((item) => inPeriod(item.date));
   const sales = periodSales.filter(reportSaleMatchesScope);
   const salesCounter = document.getElementById("reportSalesCounter");
@@ -11411,13 +11621,25 @@ function reportExpansionConfig(kind) {
   }[kind] || null;
 }
 
+function cloudReportExpansionSource(kind, summary = cachedCloudReportSummary()) {
+  if (!summary) return null;
+  return {
+    categories: summary.categories,
+    provinces: summary.provinces,
+    subcategories: summary.subcategories,
+    payments: summary.payments,
+    expenses: summary.expenseDetails,
+  }[kind] || null;
+}
+
 function openReportExpandModal(kind) {
   const config = reportExpansionConfig(kind);
   if (!config) return;
   const data = reportDetailData(currentReportSales());
-  const source = kind === "expenses"
+  const cloudSummary = cachedCloudReportSummary();
+  const source = cloudReportExpansionSource(kind, cloudSummary) || (kind === "expenses"
     ? reportExpenseDetailData(currentReportExpenses(), currentReportHistoricalMetrics())
-    : data[kind] || {};
+    : data[kind] || {});
   const modal = document.getElementById("reportExpandModal");
   const title = document.getElementById("reportExpandTitle");
   const meta = document.getElementById("reportExpandMeta");
@@ -11434,7 +11656,7 @@ function openReportExpandModal(kind) {
     averageOptions.displayLabels = data.productLabels || {};
     averageOptions.metaLabels = data.productCategories || {};
   }
-  if (kind === "subcategories") averageOptions.metaLabels = data.subcategoryCategories || {};
+  if (kind === "subcategories") averageOptions.metaLabels = cloudSummary?.subcategoryCategories || data.subcategoryCategories || {};
   if (meta) {
     const limitText = config.meta || (shownRows < totalRows ? `${shownRows} de ${totalRows}` : `${totalRows} registros`);
     meta.textContent = limitText;
