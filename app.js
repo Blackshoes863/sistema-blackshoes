@@ -1265,56 +1265,22 @@ function cloudProductSubcategoryRow(categoryName, subcategoryName) {
     .find((entry) => canonicalProductCategory(entry.category) === category && categoryKey(entry.subcategory) === categoryKey(subcategory));
 }
 
-async function syncCloudProductVariants(productId, variants = []) {
-  const { data: existing, error: readError } = await supabaseClient
-    .from("product_variants")
-    .select("id,size")
-    .eq("product_id", productId);
-  if (readError) throw new Error(`leer variantes: ${readError.message}`);
-  const existingBySize = new Map((existing || []).map((variant) => [categoryKey(variant.size), variant]));
-  const activeKeys = new Set();
-  for (const [index, variant] of normalizeProductSizeVariants(variants).entries()) {
-    const key = categoryKey(variant.size);
-    activeKeys.add(key);
-    const payload = {
-      product_id: productId,
-      size: variant.size,
-      current_stock: Number(variant.stock || 0),
-      active: true,
-      sort_order: index + 1,
-      archived_at: null,
-      updated_by: supabaseSession.user.id,
-    };
-    const existingVariant = existingBySize.get(key);
-    const query = existingVariant
-      ? supabaseClient.from("product_variants").update(payload).eq("id", existingVariant.id)
-      : supabaseClient.from("product_variants").insert({ ...payload, created_by: supabaseSession.user.id });
-    const { error } = await query;
-    if (error) throw new Error(`guardar variante ${variant.size}: ${error.message}`);
-  }
-  const removed = (existing || []).filter((variant) => !activeKeys.has(categoryKey(variant.size))).map((variant) => variant.id);
-  if (removed.length) {
-    const { error } = await supabaseClient
-      .from("product_variants")
-      .update({ active: false, archived_at: new Date().toISOString(), updated_by: supabaseSession.user.id })
-      .in("id", removed);
-    if (error) throw new Error(`archivar variantes: ${error.message}`);
-  }
+function storagePathFromProductImageUrl(url) {
+  const value = String(url || "").trim();
+  if (!value || isDataImageUrl(value)) return "";
+  if (!/^https?:\/\//i.test(value)) return value;
+  const marker = "/storage/v1/object/public/product-images/";
+  const markerIndex = value.indexOf(marker);
+  if (markerIndex === -1) return value;
+  return decodeURIComponent(value.slice(markerIndex + marker.length).split("?")[0] || "");
 }
 
-async function syncCloudProductImages(productId, urls = [], productName = "") {
-  const { error: archiveError } = await supabaseClient
-    .from("product_images")
-    .update({ archived_at: new Date().toISOString() })
-    .eq("product_id", productId)
-    .is("archived_at", null);
-  if (archiveError) throw new Error(`archivar imagenes: ${archiveError.message}`);
-
+async function prepareCloudProductImages(productId, urls = [], productName = "") {
   const bucket = supabaseClient.storage.from("product-images");
   const savedImages = [];
   for (const [index, url] of normalizeProductImageUrls(urls).entries()) {
-    let storagePath = url;
-    let publicUrl = url;
+    let storagePath = storagePathFromProductImageUrl(url);
+    let publicUrl = /^https?:\/\//i.test(String(url || "")) ? url : "";
     if (isDataImageUrl(url)) {
       const extension = imageExtensionFromDataUrl(url);
       const path = `products/${productId}/${Date.now()}-${index + 1}-${Math.floor(Math.random() * 100000)}.${extension}`;
@@ -1328,22 +1294,14 @@ async function syncCloudProductImages(productId, urls = [], productName = "") {
       storagePath = path;
       publicUrl = bucket.getPublicUrl(path).data?.publicUrl || path;
     }
-    savedImages.push({ storagePath, publicUrl });
-  }
-
-  const rows = savedImages.map((image, index) => ({
-      product_id: productId,
-      storage_path: image.storagePath,
-      public_url: image.publicUrl,
+    savedImages.push({
+      storage_path: storagePath || publicUrl,
+      public_url: publicUrl || storagePath,
       alt_text: productName,
-      is_primary: index === 0,
       sort_order: index + 1,
-      created_by: supabaseSession.user.id,
-    }));
-  if (!rows.length) return [];
-  const { error } = await supabaseClient.from("product_images").insert(rows);
-  if (error) throw new Error(`guardar imagenes: ${error.message}`);
-  return savedImages.map((image) => image.publicUrl);
+    });
+  }
+  return savedImages;
 }
 
 async function saveCloudProductRecord(existing, product) {
@@ -1351,7 +1309,9 @@ async function saveCloudProductRecord(existing, product) {
   const categoryRow = cloudProductCategoryRow(product.category);
   const subcategoryRow = cloudProductSubcategoryRow(product.category, product.subcategory);
   if (!categoryRow?.categoryId) throw new Error(`No encontre la categoria ${product.category} en Supabase.`);
-  const payload = {
+  const productId = existing?.id && isUuid(existing.id) ? existing.id : cloudOperationId();
+  const imageRows = await prepareCloudProductImages(productId, product.imageUrls, product.description);
+  const productPayload = {
     sku: product.code,
     slug: productCatalogSlug(product),
     name: product.description,
@@ -1366,16 +1326,24 @@ async function saveCloudProductRecord(existing, product) {
     wholesale_price: Number(product.wholesalePrice || 0),
     tracks_stock: Boolean(product.tracksStock),
     published: Boolean(product.published),
-    updated_by: supabaseSession.user.id,
   };
-  const query = existing?.id
-    ? supabaseClient.from("products").update(payload).eq("id", existing.id).select("*").single()
-    : supabaseClient.from("products").insert({ ...payload, created_by: supabaseSession.user.id }).select("*").single();
-  const { data, error } = await query;
+  const variantsPayload = product.tracksStock
+    ? normalizeProductSizeVariants(product.sizeVariants).map((variant, index) => ({
+      size: variant.size,
+      stock: Number(variant.stock || 0),
+      sort_order: index + 1,
+    }))
+    : [];
+  const { data, error } = await supabaseClient.rpc("save_product_with_assets", {
+    p_operation_id: cloudOperationId(),
+    p_product_id: productId,
+    p_product: productPayload,
+    p_variants: variantsPayload,
+    p_images: imageRows,
+  });
   if (error) throw new Error(`guardar producto: ${error.message}`);
-  await syncCloudProductVariants(data.id, product.tracksStock ? product.sizeVariants : []);
-  const imageUrls = await syncCloudProductImages(data.id, product.imageUrls, product.description);
-  return { ...product, id: data.id, slug: data.slug, imageUrls, images: imageUrls, createdAt: data.created_at, updatedAt: data.updated_at };
+  const imageUrls = normalizeProductImageUrls(data?.imageUrls || imageRows.map((image) => image.public_url || image.storage_path));
+  return { ...product, id: data?.id || productId, slug: data?.slug || productPayload.slug, imageUrls, images: imageUrls };
 }
 
 function isUuid(value) {
