@@ -1959,8 +1959,11 @@ async function cloudSaleItemsFromCartAsync(cart) {
 async function saveCloudLocalSale(cart, customer) {
   if (!cloudEnabledWithSession()) throw new Error("Ingresá con tu usuario BlackShoes para registrar ventas.");
   const items = await cloudSaleItemsFromCartAsync(cart);
-  const { data, error } = await supabaseClient.rpc("create_sale", {
-    p_operation_id: cloudOperationId(),
+  const operationId = isUuid(cart.operationId) ? cart.operationId : cloudOperationId();
+  cart.operationId = operationId;
+  saveUiState();
+  const { data, error } = await supabaseClient.rpc("create_sale_complete", {
+    p_operation_id: operationId,
     p_customer_id: customer?.id && isUuid(customer.id) ? customer.id : null,
     p_paid_amount: cartPaidAmount(cart),
     p_payment_method: cart.paymentMethod || "",
@@ -1969,7 +1972,7 @@ async function saveCloudLocalSale(cart, customer) {
     p_items: items,
   });
   if (error) throw new Error(`registrar venta: ${error.message}`);
-  return data;
+  return mergeCloudSalesIntoState(data ? [data] : [])[0] || data;
 }
 
 async function saveCloudCustomerPayment({ customer, sale, amount, method, note }) {
@@ -2246,6 +2249,7 @@ function normalizeState(rawState) {
     customerId: cart.customerId || "",
     partialPaymentEnabled: Boolean(cart.partialPaymentEnabled),
     paidAmount: cart.paidAmount ?? "",
+    operationId: isUuid(cart.operationId) ? cart.operationId : cloudOperationId(),
   }));
   next.onlineOrders = (next.onlineOrders || []).map((order) => ({
     ...order,
@@ -3583,6 +3587,7 @@ function createEmptyCart() {
     manualTotal: "",
     partialPaymentEnabled: false,
     paidAmount: "",
+    operationId: cloudOperationId(),
     syncStatus: state.offline ? "pending" : "synced",
   };
 }
@@ -3663,6 +3668,26 @@ function cartPaidAmount(cart = {}) {
 
 function cartOutstandingDebt(cart = {}) {
   return Math.max(0, cartTotal(cart) - cartPaidAmount(cart));
+}
+
+function applyCartStockDelta(cart, { sale = null, recordHistory = false } = {}) {
+  (cart.items || []).forEach((item) => {
+    if (!item.productId || !item.tracksStock) return;
+    const product = state.products.find((entry) => entry.id === item.productId);
+    if (!product || typeof product.stock !== "number") return;
+    const quantity = Number(item.quantity || 0);
+    if (item.size && productHasSizeVariants(product)) {
+      product.sizeVariants = normalizeProductSizeVariants(product.sizeVariants).map((variant) =>
+        variant.size === item.size ? { ...variant, stock: Math.max(0, Number(variant.stock || 0) - quantity) } : variant
+      );
+      product.stock = productSizeStockTotal(product);
+    } else {
+      product.stock = Math.max(0, Number(product.stock || 0) - quantity);
+    }
+    if (recordHistory && sale) {
+      addStockHistory(product, "venta", -quantity, product.stock, `Venta Local ${sale.id}${item.size ? ` - Talle ${item.size}` : ""}`, sale.date);
+    }
+  });
 }
 
 function saleTypeAdjustment(saleType) {
@@ -6634,12 +6659,16 @@ async function finalizeCart(cartId) {
       }
       const cloudCustomer = customer ? await ensureCloudCustomer(customer) : null;
       cart.customerId = cloudCustomer?.id || "";
-      await saveCloudLocalSale(cart, cloudCustomer);
+      const savedSale = await saveCloudLocalSale(cart, cloudCustomer);
+      applyCartStockDelta(cart);
+      invalidateCloudSalesHistoryCache();
+      invalidateCloudProductsCache();
+      invalidateCloudCustomersCache();
       state.salesHistoryPage = 1;
       state.carts = state.carts.filter((item) => item.id !== cartId);
       openFreshCartAfterFinalize();
-      logActivity("sale", "Registro venta local", `${money(sale.total)}`);
-      await loadCloudData();
+      logActivity("sale", "Registro venta local", `${saleOrder(savedSale || sale)} - ${money(sale.total)}`);
+      loadCloudDashboardSummary(state.selectedMonth || currentMonthKey(), { force: true }).catch((error) => console.warn("Cloud dashboard refresh failed", error));
       saveState();
       render();
       showActionToast("Venta registrada en Supabase.");
@@ -6650,21 +6679,7 @@ async function finalizeCart(cartId) {
       return;
     }
   }
-  sale.items.forEach((item) => {
-    if (!item.productId || !item.tracksStock) return;
-    const product = state.products.find((entry) => entry.id === item.productId);
-    if (product && typeof product.stock === "number") {
-      if (item.size && productHasSizeVariants(product)) {
-        product.sizeVariants = normalizeProductSizeVariants(product.sizeVariants).map((variant) =>
-          variant.size === item.size ? { ...variant, stock: Math.max(0, Number(variant.stock || 0) - Number(item.quantity || 0)) } : variant
-        );
-        product.stock = productSizeStockTotal(product);
-      } else {
-        product.stock -= item.quantity;
-      }
-      addStockHistory(product, "venta", -item.quantity, product.stock, `Venta Local ${sale.id}${item.size ? ` - Talle ${item.size}` : ""}`, sale.date);
-    }
-  });
+  applyCartStockDelta(cart, { sale, recordHistory: true });
   state.sales.push(sale);
   state.salesHistoryPage = 1;
   state.carts = state.carts.filter((item) => item.id !== cartId);
