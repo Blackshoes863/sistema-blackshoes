@@ -1975,18 +1975,35 @@ async function saveCloudLocalSale(cart, customer) {
   return mergeCloudSalesIntoState(data ? [data] : [])[0] || data;
 }
 
-async function saveCloudCustomerPayment({ customer, sale, amount, method, note }) {
+function mergeCloudCustomerPaymentResult(data = {}) {
+  const result = {
+    payment: data.payment ? normalizeCloudPayment(data.payment) : null,
+    sale: null,
+    customer: null,
+  };
+  if (data.sale) {
+    result.sale = mergeCloudSalesIntoState([data.sale])[0] || null;
+  }
+  if (data.customer) {
+    result.customer = mergeCloudCustomersIntoState([data.customer])[0] || null;
+  }
+  return result;
+}
+
+async function saveCloudCustomerPayment({ customer, sale, amount, method, note, date, operationId }) {
   if (!cloudEnabledWithSession()) throw new Error("Ingresá con tu usuario BlackShoes para registrar pagos.");
-  const { data, error } = await supabaseClient.rpc("register_customer_payment", {
-    p_operation_id: cloudOperationId(),
+  const stableOperationId = isUuid(operationId) ? operationId : cloudOperationId();
+  const { data, error } = await supabaseClient.rpc("register_customer_payment_complete", {
+    p_operation_id: stableOperationId,
     p_customer_id: customer?.id && isUuid(customer.id) ? customer.id : null,
     p_sale_id: sale?.id && isUuid(sale.id) ? sale.id : null,
     p_amount: amount,
     p_method: method || "efectivo",
     p_note: note || "",
+    p_paid_at: cloudTimestampFromDate(date),
   });
   if (error) throw new Error(`registrar pago: ${error.message}`);
-  return data;
+  return mergeCloudCustomerPaymentResult(data || {});
 }
 
 async function saveCloudExpenseRecord(payload) {
@@ -9231,20 +9248,28 @@ async function registerCustomerDebtPayment(form) {
         return;
       }
       const cloudCustomer = await ensureCloudCustomer(customer);
-      await saveCloudCustomerPayment({
+      const operationId = isUuid(form.dataset.operationId) ? form.dataset.operationId : cloudOperationId();
+      form.dataset.operationId = operationId;
+      const result = await saveCloudCustomerPayment({
         customer: cloudCustomer,
         sale: isInitialDebt ? null : sale,
         amount,
         method: data.paymentMethod || "efectivo",
         note: isInitialDebt ? (data.notes || "Pago de deuda inicial") : (data.notes || `Pago ${saleOrder(sale)}`),
+        date,
+        operationId,
       });
       invalidateCloudCustomersCache();
       invalidateCloudSalesHistoryCache();
-      await loadCloudCustomersPage(state.customerFilters, state.customerPage || 1, { force: true });
-      await loadCloudOperationalData();
+      cloudDashboardSummaryCache.clear();
+      if (result.customer && customer.id !== result.customer.id) {
+        form.elements.customerId.value = result.customer.id;
+      }
       form.reset();
-      form.elements.customerId.value = cloudCustomer.id;
+      delete form.dataset.operationId;
+      form.elements.customerId.value = result.customer?.id || cloudCustomer.id;
       setDateInput(form.elements.date, todayIso());
+      loadCloudDashboardSummary(state.selectedMonth || currentMonthKey(), { force: true }).catch((error) => console.warn("Cloud dashboard refresh failed", error));
       saveState();
       renderCustomers();
       renderCustomerInfoSales();
