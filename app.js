@@ -224,6 +224,10 @@ const cloudDashboardSummaryFailures = new Map();
 const cloudSalesHistoryCache = new Map();
 const cloudSalesHistoryLoads = new Map();
 const cloudSalesHistoryFailures = new Map();
+const cloudExpensesCache = new Map();
+const cloudExpensesLoads = new Map();
+const cloudExpensesFailures = new Map();
+const cloudExpenseRowsByKey = new Map();
 
 function openConfirmModal({ title = "Confirmar accion", message = "", confirmText = "Confirmar", cancelText = "Cancelar", danger = false, onConfirm = null, onCancel = null }) {
   pendingConfirmAction = typeof onConfirm === "function" ? onConfirm : null;
@@ -1643,7 +1647,7 @@ function cloudModeCovers(currentMode, requestedMode) {
 }
 
 function cloudModeForView(viewId) {
-  return ["customers", "expenses", "reports"].includes(viewId) ? "full" : "initial";
+  return ["customers", "reports"].includes(viewId) ? "full" : "initial";
 }
 
 async function ensureCloudDataForView(viewId) {
@@ -1840,6 +1844,7 @@ function requestCloudDashboardSummary(monthKey = state.selectedMonth || currentM
 
 async function loadCloudData({ mode = "initial", force = false } = {}) {
   invalidateCloudSalesHistoryCache();
+  invalidateCloudExpensesCache();
   await loadCloudBusinessSettings();
   await loadCloudProductCatalog();
   await loadCloudOperationalData({ mode, force });
@@ -7231,9 +7236,132 @@ function filteredExpenseRows() {
     .sort((a, b) => String(b.date).localeCompare(String(a.date)) || Number(b.rowOrder || 0) - Number(a.rowOrder || 0));
 }
 
+function normalizeCloudExpensePageRow(row = {}) {
+  const entry = {
+    key: row.key || `${row.source || "expense"}:${row.id}`,
+    source: row.source || "expense",
+    id: row.id,
+    date: row.date || todayIso(),
+    type: row.type || "expense",
+    category: row.category || "Servicios",
+    behavior: row.behavior || "variable",
+    area: canonicalExpenseArea(row.area),
+    concept: row.concept || row.category || "Movimiento",
+    detail: row.detail || "",
+    amount: Number(row.amount || 0),
+    affectsResult: row.affects_result ?? row.affectsResult ?? true,
+    deletable: row.deletable !== false,
+    editableAmount: Boolean(row.editable_amount ?? row.editableAmount),
+    automatic: Boolean(row.automatic),
+    rowOrder: Number(row.row_order ?? row.rowOrder ?? 0),
+  };
+  cloudExpenseRowsByKey.set(entry.key, entry);
+  return entry;
+}
+
+function cloudExpensesRequest(filters = state.expenseFilters || {}, page = state.expensesPage || 1) {
+  const safeFilters = defaultExpenseFilters();
+  Object.assign(safeFilters, filters || {});
+  return {
+    query: String(safeFilters.query || "").trim(),
+    year: safeFilters.year || String(new Date().getFullYear()),
+    month: safeFilters.month || String(new Date().getMonth() + 1).padStart(2, "0"),
+    category: safeFilters.category || "all",
+    type: safeFilters.type || "all",
+    behavior: safeFilters.behavior || "all",
+    commissions: safeFilters.commissions || "all",
+    page: Math.max(1, Number(page || 1)),
+    pageSize: PAGE_SIZE,
+  };
+}
+
+function cloudExpensesKey(request) {
+  return JSON.stringify({
+    query: request.query,
+    year: request.year,
+    month: request.month,
+    category: request.category,
+    type: request.type,
+    behavior: request.behavior,
+    commissions: request.commissions,
+    page: request.page,
+    pageSize: request.pageSize,
+  });
+}
+
+function cachedCloudExpensesPage(filters = state.expenseFilters || {}, page = state.expensesPage || 1) {
+  return cloudExpensesCache.get(cloudExpensesKey(cloudExpensesRequest(filters, page)));
+}
+
+async function loadCloudExpensesPage(filters = state.expenseFilters || {}, page = state.expensesPage || 1, { force = false } = {}) {
+  if (!cloudEnabledWithSession()) return null;
+  const request = cloudExpensesRequest(filters, page);
+  const key = cloudExpensesKey(request);
+  if (!force && cloudExpensesCache.has(key)) return cloudExpensesCache.get(key);
+  if (cloudExpensesLoads.has(key)) return cloudExpensesLoads.get(key);
+  const recentFailureAt = cloudExpensesFailures.get(key) || 0;
+  if (!force && Date.now() - recentFailureAt < 30000) return null;
+  const load = (async () => {
+    const { data, error } = await supabaseClient.rpc("list_expenses_page", {
+      p_query: request.query,
+      p_year: request.year,
+      p_month: request.month,
+      p_category: request.category,
+      p_type: request.type,
+      p_behavior: request.behavior,
+      p_hide_commissions: request.commissions === "hide",
+      p_page: request.page,
+      p_page_size: request.pageSize,
+    });
+    if (error) throw new Error(`gastos: ${error.message}`);
+    const rows = (data?.rows || []).map(normalizeCloudExpensePageRow);
+    const result = {
+      rows,
+      totalCount: Number(data?.totalCount || 0),
+      totalAmount: Number(data?.totalAmount || 0),
+      page: Number(data?.page || request.page),
+      pageSize: Number(data?.pageSize || request.pageSize),
+      loadedAt: Date.now(),
+    };
+    cloudExpensesCache.set(key, result);
+    cloudExpensesFailures.delete(key);
+    return result;
+  })();
+  cloudExpensesLoads.set(key, load);
+  try {
+    return await load;
+  } catch (error) {
+    cloudExpensesFailures.set(key, Date.now());
+    console.warn("Cloud expenses failed", error);
+    return null;
+  } finally {
+    cloudExpensesLoads.delete(key);
+  }
+}
+
+function requestCloudExpensesPage(filters = state.expenseFilters || {}, page = state.expensesPage || 1) {
+  if (!cloudEnabledWithSession()) return;
+  const request = cloudExpensesRequest(filters, page);
+  const key = cloudExpensesKey(request);
+  if (cloudExpensesCache.has(key) || cloudExpensesLoads.has(key)) return;
+  loadCloudExpensesPage(filters, page).then((result) => {
+    if (result && state.activeView === "expenses") renderExpenses();
+  });
+}
+
+function invalidateCloudExpensesCache() {
+  cloudExpensesCache.clear();
+  cloudExpensesFailures.clear();
+  cloudExpenseRowsByKey.clear();
+}
+
+function expenseEntryByKey(key) {
+  return expenseRows().find((item) => item.key === key) || cloudExpenseRowsByKey.get(key) || null;
+}
+
 function deleteExpenseMovement(key) {
   const [source, id] = String(key || "").split(":");
-  const entry = expenseRows().find((item) => item.key === key);
+  const entry = expenseEntryByKey(key);
   if (!entry || !entry.deletable) return;
   openConfirmModal({
     title: "Eliminar gasto",
@@ -7249,6 +7377,7 @@ function deleteExpenseMovement(key) {
             return;
           }
           await archiveCloudRecord("expense", id);
+          invalidateCloudExpensesCache();
           logActivity("expense", "Archivo gasto", `${entry.concept} - ${money(entry.amount)}`);
           await loadCloudOperationalData();
           saveState();
@@ -7290,7 +7419,7 @@ function updateExpenseMovementAmount(key, amount) {
     }
   }
   if (!updated) return;
-  const entry = expenseRows().find((item) => item.key === key);
+  const entry = expenseEntryByKey(key);
   logActivity("expense", "Edito importe liquidacion", `${entry?.concept || "Liquidacion de stock"} - ${money(value)}`);
   saveState();
   renderExpenses();
@@ -10503,13 +10632,20 @@ function renderExpenses() {
     const node = document.getElementById(id);
     if (node) node.value = value;
   });
+  requestCloudExpensesPage(state.expenseFilters, state.expensesPage);
+  const cloudPage = cachedCloudExpensesPage(state.expenseFilters, state.expensesPage);
   const rows = filteredExpenseRows();
-  const page = pageItems(rows, state.expensesPage);
-  state.expensesPage = page.current;
-  const total = sum(rows, (entry) => entry.amount);
+  const totalItems = cloudPage ? cloudPage.totalCount : rows.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / PAGE_SIZE));
+  const current = Math.min(Math.max(1, Number(state.expensesPage || 1)), totalPages);
+  const pageRows = cloudPage && cloudPage.page === current
+    ? cloudPage.rows
+    : rows.slice((current - 1) * PAGE_SIZE, current * PAGE_SIZE);
+  state.expensesPage = current;
+  const total = cloudPage ? cloudPage.totalAmount : sum(rows, (entry) => entry.amount);
   const summaryNode = document.getElementById("expenseFilteredSummary");
-  if (summaryNode) summaryNode.textContent = `Total Filtrado = ${money(total)} (${rows.length} ${rows.length === 1 ? "movimiento" : "movimientos"})`;
-  document.getElementById("expensesTable").innerHTML = page.rows.map((entry) => `
+  if (summaryNode) summaryNode.textContent = `Total Filtrado = ${money(total)} (${totalItems} ${totalItems === 1 ? "movimiento" : "movimientos"})`;
+  document.getElementById("expensesTable").innerHTML = pageRows.map((entry) => `
     <tr>
       <td>${formatDateShort(entry.date)}</td>
       <td><span class="expense-badge ${expenseTypeClass(entry.type)}">${expenseTypeLabel(entry.type)}</span></td>
@@ -10522,7 +10658,7 @@ function renderExpenses() {
       </td>
     </tr>
   `).join("") || `<tr><td colspan="7">Todavía no hay movimientos cargados.</td></tr>`;
-  document.getElementById("expensesPagination").innerHTML = paginationControls("expenses", page.current, page.totalPages, rows.length);
+  document.getElementById("expensesPagination").innerHTML = paginationControls("expenses", current, totalPages, totalItems);
   updateExpenseFormType();
 }
 
@@ -12430,6 +12566,7 @@ document.getElementById("expenseForm").addEventListener("submit", async (event) 
         amount: Number(data.amount || 0),
         paymentMethod: data.paymentMethod || "",
       });
+      invalidateCloudExpensesCache();
       await loadCloudOperationalData();
       logActivity(rule.type === "purchase" ? "expense" : "expense", rule.type === "purchase" ? "Registro mercaderia" : "Registro gasto", `${concept} - ${money(Number(data.amount || 0))}`);
       event.target.reset();
