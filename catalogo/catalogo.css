@@ -328,6 +328,28 @@ button.size-chip {
   background: #111;
 }
 
+.catalog-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin: 24px 0 0;
+}
+
+.catalog-pagination span {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.catalog-pagination button {
+  cursor: pointer;
+}
+
+.catalog-pagination button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .whatsapp-action.full {
   width: 100%;
   min-height: 48px;

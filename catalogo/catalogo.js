@@ -23,6 +23,12 @@ const currency = new Intl.NumberFormat("es-AR", {
 });
 
 let catalogProducts = [];
+let catalogClient = null;
+let catalogRemotePaging = false;
+let catalogCurrentPage = 1;
+let catalogTotalCount = 0;
+let catalogPageSize = 24;
+let catalogSearchTimer = null;
 
 function catalogRootPath() {
   return "/catalogo/";
@@ -30,6 +36,10 @@ function catalogRootPath() {
 
 function catalogSection() {
   return "all";
+}
+
+function isProductDetailPage() {
+  return Boolean(document.getElementById("productDetail"));
 }
 
 function escapeHtml(value) {
@@ -156,6 +166,45 @@ function renderFilterOptions(products) {
   renderSelectOptions("catalogSubcategory", products.map((product) => product.subcategory), "Subcategorias");
   renderSelectOptions("catalogColor", products.map((product) => product.color), "Colores");
   renderSelectOptions("catalogSize", products.flatMap((product) => product.sizes.map((variant) => variant.size)), "Talles");
+}
+
+function renderRemoteFilterOptions(filters = {}) {
+  renderSelectOptions("catalogCategory", filters.categories || [], "Categorias");
+  renderSelectOptions("catalogSubcategory", filters.subcategories || [], "Subcategorias");
+  renderSelectOptions("catalogColor", filters.colors || [], "Colores");
+  renderSelectOptions("catalogSize", filters.sizes || [], "Talles");
+}
+
+function catalogFilterValues() {
+  const maxPriceRaw = document.getElementById("catalogMaxPrice")?.value || "";
+  return {
+    query: String(document.getElementById("catalogSearch")?.value || "").trim(),
+    category: document.getElementById("catalogCategory")?.value || "all",
+    subcategory: document.getElementById("catalogSubcategory")?.value || "all",
+    color: document.getElementById("catalogColor")?.value || "all",
+    size: document.getElementById("catalogSize")?.value || "all",
+    minPrice: Number(document.getElementById("catalogMinPrice")?.value || 0) || null,
+    maxPrice: maxPriceRaw === "" ? null : Number(maxPriceRaw),
+    sort: document.getElementById("catalogSort")?.value || "new",
+  };
+}
+
+function renderCatalogPagination() {
+  const pagination = document.getElementById("catalogPagination");
+  if (!pagination) return;
+  if (!catalogRemotePaging || catalogTotalCount <= catalogPageSize) {
+    pagination.innerHTML = "";
+    pagination.hidden = true;
+    return;
+  }
+  const totalPages = Math.max(1, Math.ceil(catalogTotalCount / catalogPageSize));
+  catalogCurrentPage = Math.min(Math.max(1, catalogCurrentPage), totalPages);
+  pagination.hidden = false;
+  pagination.innerHTML = `
+    <button class="secondary-action" data-catalog-page-delta="-1" ${catalogCurrentPage <= 1 ? "disabled" : ""} type="button">Anterior</button>
+    <span>Pagina ${catalogCurrentPage} de ${totalPages}</span>
+    <button class="secondary-action" data-catalog-page-delta="1" ${catalogCurrentPage >= totalPages ? "disabled" : ""} type="button">Siguiente</button>
+  `;
 }
 
 function filteredProducts() {
@@ -320,7 +369,7 @@ function renderCatalogGrid() {
   const grid = document.getElementById("catalogGrid");
   const empty = document.getElementById("catalogEmpty");
   if (!grid) return;
-  const products = filteredProducts();
+  const products = catalogRemotePaging ? publicProducts() : filteredProducts();
   grid.innerHTML = products.map((product) => {
     const slug = productSlug(product);
     const firstSize = product.sizes.find((variant) => variant.stock > 0)?.size || product.sizes[0]?.size || "";
@@ -344,7 +393,8 @@ function renderCatalogGrid() {
       </article>
     `;
   }).join("");
-  if (empty) empty.hidden = products.length > 0 || catalogProducts.length > 0;
+  if (empty) empty.hidden = products.length > 0 || catalogProducts.length > 0 || catalogTotalCount > 0;
+  renderCatalogPagination();
 }
 
 function selectedProduct() {
@@ -421,6 +471,89 @@ function renderProductDetail(selectedSize = "") {
   `;
 }
 
+function catalogSlugFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get("slug") || slugify(window.location.pathname.split("/").filter(Boolean).pop() || "");
+}
+
+async function loadRemoteCatalogPage(page = catalogCurrentPage) {
+  if (!catalogClient) return false;
+  const filters = catalogFilterValues();
+  renderStatus("Actualizando");
+  const { data, error } = await catalogClient.rpc("list_public_catalog_products", {
+    p_query: filters.query,
+    p_category: filters.category,
+    p_subcategory: filters.subcategory,
+    p_color: filters.color,
+    p_size: filters.size,
+    p_min_price: filters.minPrice,
+    p_max_price: filters.maxPrice,
+    p_sort: filters.sort,
+    p_page: page,
+    p_page_size: catalogPageSize,
+  });
+  if (error) throw error;
+  catalogRemotePaging = true;
+  catalogCurrentPage = Number(data?.page || page || 1);
+  catalogPageSize = Number(data?.pageSize || catalogPageSize);
+  catalogTotalCount = Number(data?.totalCount || 0);
+  catalogProducts = (data?.rows || []).map(normalizeCatalogProduct);
+  renderRemoteFilterOptions(data?.filters || {});
+  renderCatalogGrid();
+  renderStatus(catalogTotalCount ? "Catalogo actualizado" : "Sin productos");
+  return true;
+}
+
+async function loadRemoteProductDetail() {
+  if (!catalogClient) return false;
+  renderStatus("Actualizando");
+  const { data, error } = await catalogClient.rpc("get_public_catalog_product", {
+    p_slug: catalogSlugFromUrl(),
+  });
+  if (error) throw error;
+  const rows = [data?.product, ...(data?.related || [])].filter(Boolean);
+  catalogRemotePaging = true;
+  catalogProducts = rows.map(normalizeCatalogProduct);
+  catalogTotalCount = catalogProducts.length;
+  renderProductDetail();
+  renderStatus(data?.product ? "Producto actualizado" : "Producto no disponible");
+  return true;
+}
+
+async function loadLegacyCatalogProducts(client) {
+  const { data, error } = await client
+    .from(BLACKSHOES_CATALOG_CONFIG.productsView)
+    .select("*")
+    .eq("published", true)
+    .order("description", { ascending: true });
+  if (error) throw error;
+  catalogRemotePaging = false;
+  catalogProducts = (data || []).map(normalizeCatalogProduct);
+  catalogTotalCount = catalogProducts.length;
+  renderFilterOptions(publicProducts());
+  renderCatalogGrid();
+  renderProductDetail();
+  renderStatus("Catalogo actualizado");
+}
+
+function reloadCatalogPage({ resetPage = true, debounce = false } = {}) {
+  if (!catalogRemotePaging || !catalogClient || isProductDetailPage()) {
+    renderCatalogGrid();
+    return;
+  }
+  if (resetPage) catalogCurrentPage = 1;
+  const run = () => loadRemoteCatalogPage(catalogCurrentPage).catch((error) => {
+    console.warn("No se pudo actualizar la pagina del catalogo", error);
+    renderStatus("No disponible");
+  });
+  if (!debounce) {
+    run();
+    return;
+  }
+  clearTimeout(catalogSearchTimer);
+  catalogSearchTimer = setTimeout(run, 250);
+}
+
 async function loadCatalogProducts() {
   if (!BLACKSHOES_CATALOG_CONFIG.enabled || !BLACKSHOES_CATALOG_CONFIG.supabaseUrl || !BLACKSHOES_CATALOG_CONFIG.supabasePublishableKey) {
     renderLocalCatalogState();
@@ -429,40 +562,49 @@ async function loadCatalogProducts() {
 
   try {
     renderStatus("Actualizando");
-    const client = window.supabase.createClient(
+    catalogClient = window.supabase.createClient(
       BLACKSHOES_CATALOG_CONFIG.supabaseUrl,
       BLACKSHOES_CATALOG_CONFIG.supabasePublishableKey
     );
-    await loadBusinessSettings(client);
+    await loadBusinessSettings(catalogClient);
     renderBusinessIdentity();
-    const { data, error } = await client
-      .from(BLACKSHOES_CATALOG_CONFIG.productsView)
-      .select("*")
-      .eq("published", true)
-      .order("description", { ascending: true });
-    if (error) throw error;
-    catalogProducts = (data || []).map(normalizeCatalogProduct);
-    renderFilterOptions(publicProducts());
-    renderCatalogGrid();
-    renderProductDetail();
-    renderStatus("Catalogo actualizado");
+    if (isProductDetailPage()) {
+      await loadRemoteProductDetail();
+      return;
+    }
+    await loadRemoteCatalogPage(1);
   } catch (error) {
     console.warn("No se pudo cargar el catalogo publico", error);
+    try {
+      if (catalogClient && !isProductDetailPage()) {
+        await loadLegacyCatalogProducts(catalogClient);
+        return;
+      }
+    } catch (legacyError) {
+      console.warn("No se pudo cargar el catalogo legacy", legacyError);
+    }
     renderStatus("No disponible");
     renderCatalogGrid();
     renderProductDetail();
   }
 }
 
-document.getElementById("catalogSearch")?.addEventListener("input", renderCatalogGrid);
-document.getElementById("catalogCategory")?.addEventListener("change", renderCatalogGrid);
-document.getElementById("catalogSubcategory")?.addEventListener("change", renderCatalogGrid);
-document.getElementById("catalogColor")?.addEventListener("change", renderCatalogGrid);
-document.getElementById("catalogSize")?.addEventListener("change", renderCatalogGrid);
-document.getElementById("catalogMinPrice")?.addEventListener("input", renderCatalogGrid);
-document.getElementById("catalogMaxPrice")?.addEventListener("input", renderCatalogGrid);
-document.getElementById("catalogSort")?.addEventListener("change", renderCatalogGrid);
+document.getElementById("catalogSearch")?.addEventListener("input", () => reloadCatalogPage({ resetPage: true, debounce: true }));
+document.getElementById("catalogCategory")?.addEventListener("change", () => reloadCatalogPage({ resetPage: true }));
+document.getElementById("catalogSubcategory")?.addEventListener("change", () => reloadCatalogPage({ resetPage: true }));
+document.getElementById("catalogColor")?.addEventListener("change", () => reloadCatalogPage({ resetPage: true }));
+document.getElementById("catalogSize")?.addEventListener("change", () => reloadCatalogPage({ resetPage: true }));
+document.getElementById("catalogMinPrice")?.addEventListener("input", () => reloadCatalogPage({ resetPage: true, debounce: true }));
+document.getElementById("catalogMaxPrice")?.addEventListener("input", () => reloadCatalogPage({ resetPage: true, debounce: true }));
+document.getElementById("catalogSort")?.addEventListener("change", () => reloadCatalogPage({ resetPage: true }));
 document.addEventListener("click", (event) => {
+  const pageButton = event.target.closest("[data-catalog-page-delta]");
+  if (pageButton) {
+    catalogCurrentPage += Number(pageButton.dataset.catalogPageDelta || 0);
+    reloadCatalogPage({ resetPage: false });
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    return;
+  }
   const galleryThumb = event.target.closest("[data-gallery-thumb]");
   if (galleryThumb) {
     const gallery = galleryThumb.closest("[data-product-gallery]");
