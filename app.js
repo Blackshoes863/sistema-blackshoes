@@ -1634,6 +1634,36 @@ function normalizeCloudExpense(row = {}) {
   };
 }
 
+function normalizeCloudPurchaseExpense(row = {}) {
+  return {
+    id: row.id,
+    date: isoDateFromTimestamp(row.expense_at || row.created_at),
+    supplier: row.note || "Compra de Mercadería",
+    category: "CompraMercaderia",
+    behavior: "variable",
+    area: "local",
+    amount: Number(row.amount || 0),
+    notes: row.note || "",
+    stockEntryId: row.operation_id || "",
+    createdAt: row.created_at || "",
+  };
+}
+
+function mergeCloudExpenseRecord(row = {}) {
+  if (!row?.id) return null;
+  const isPurchase = ["CompraMercaderia", "Mercaderia"].includes(row.category);
+  state.expenses = (state.expenses || []).filter((expense) => expense.id !== row.id);
+  state.purchases = (state.purchases || []).filter((purchase) => purchase.id !== row.id);
+  if (isPurchase) {
+    const purchase = normalizeCloudPurchaseExpense(row);
+    state.purchases = [purchase, ...state.purchases].sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
+    return purchase;
+  }
+  const expense = normalizeCloudExpense(row);
+  state.expenses = [expense, ...state.expenses].sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
+  return expense;
+}
+
 function normalizeCloudStockMovement(row = {}) {
   const product = state.products.find((entry) => entry.id === row.product_id);
   const variant = product?.sizeVariants?.find((entry) => entry.id === row.variant_id);
@@ -2008,18 +2038,16 @@ async function saveCloudCustomerPayment({ customer, sale, amount, method, note, 
 
 async function saveCloudExpenseRecord(payload) {
   if (!cloudEnabledWithSession()) return payload;
-  const row = {
-    operation_id: cloudOperationId(),
-    expense_at: cloudTimestampFromDate(payload.date),
-    category: payload.category || "Otros",
-    amount: Number(payload.amount || 0),
-    payment_method: payload.paymentMethod || "",
-    note: payload.concept || payload.notes || "",
-    created_by: supabaseSession.user.id,
-  };
-  const { data, error } = await supabaseClient.from("expenses").insert(row).select("*").single();
+  const { data, error } = await supabaseClient.rpc("register_expense", {
+    p_operation_id: payload.operationId && isUuid(payload.operationId) ? payload.operationId : cloudOperationId(),
+    p_expense_at: cloudTimestampFromDate(payload.date),
+    p_category: payload.category || "Otros",
+    p_amount: Number(payload.amount || 0),
+    p_payment_method: payload.paymentMethod || "",
+    p_note: payload.concept || payload.notes || "",
+  });
   if (error) throw new Error(`guardar gasto: ${error.message}`);
-  return normalizeCloudExpense(data);
+  return mergeCloudExpenseRecord(data || {});
 }
 
 async function saveCloudStockEntry(entry) {
@@ -7502,6 +7530,7 @@ function invalidateCloudExpensesCache() {
   cloudExpensesCache.clear();
   cloudExpensesFailures.clear();
   cloudExpenseRowsByKey.clear();
+  cloudDashboardSummaryCache.clear();
   invalidateCloudReportSummaryCache();
 }
 
@@ -7527,9 +7556,12 @@ function deleteExpenseMovement(key) {
             return;
           }
           await archiveCloudRecord("expense", id);
+          state.expenses = state.expenses.filter((item) => item.id !== id);
+          state.purchases = state.purchases.filter((item) => item.id !== id);
           invalidateCloudExpensesCache();
           logActivity("expense", "Archivo gasto", `${entry.concept} - ${money(entry.amount)}`);
-          await loadCloudOperationalData();
+          await loadCloudExpensesPage(state.expenseFilters, state.expensesPage || 1, { force: true });
+          loadCloudDashboardSummary(state.selectedMonth || currentMonthKey(), { force: true }).catch((error) => console.warn("Cloud dashboard refresh failed", error));
           saveState();
           render();
           showActionToast("Gasto archivado en Supabase.");
@@ -13046,7 +13078,10 @@ document.getElementById("expenseForm").addEventListener("submit", async (event) 
         renderAuthState("Ingresá para guardar en Supabase.");
         return;
       }
+      const operationId = isUuid(event.target.dataset.operationId) ? event.target.dataset.operationId : cloudOperationId();
+      event.target.dataset.operationId = operationId;
       await saveCloudExpenseRecord({
+        operationId,
         date: movementDate,
         concept,
         category: rule.type === "purchase" ? "CompraMercaderia" : data.category,
@@ -13054,9 +13089,12 @@ document.getElementById("expenseForm").addEventListener("submit", async (event) 
         paymentMethod: data.paymentMethod || "",
       });
       invalidateCloudExpensesCache();
-      await loadCloudOperationalData();
+      state.expensesPage = 1;
+      await loadCloudExpensesPage(state.expenseFilters, state.expensesPage, { force: true });
+      loadCloudDashboardSummary(state.selectedMonth || currentMonthKey(), { force: true }).catch((error) => console.warn("Cloud dashboard refresh failed", error));
       logActivity(rule.type === "purchase" ? "expense" : "expense", rule.type === "purchase" ? "Registro mercaderia" : "Registro gasto", `${concept} - ${money(Number(data.amount || 0))}`);
       event.target.reset();
+      delete event.target.dataset.operationId;
       event.target.date.value = todayIso();
       updateExpenseFormType();
       saveState();
