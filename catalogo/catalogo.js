@@ -188,15 +188,12 @@ function renderRemoteFilterOptions(filters = {}) {
 }
 
 function catalogFilterValues() {
-  const maxPriceRaw = document.getElementById("catalogMaxPrice")?.value || "";
   return {
     query: String(document.getElementById("catalogSearch")?.value || "").trim(),
     category: document.getElementById("catalogCategory")?.value || "all",
     subcategory: document.getElementById("catalogSubcategory")?.value || "all",
     color: document.getElementById("catalogColor")?.value || "all",
     size: document.getElementById("catalogSize")?.value || "all",
-    minPrice: Number(document.getElementById("catalogMinPrice")?.value || 0) || null,
-    maxPrice: maxPriceRaw === "" ? null : Number(maxPriceRaw),
     sort: document.getElementById("catalogSort")?.value || "new",
   };
 }
@@ -225,20 +222,15 @@ function filteredProducts() {
   const subcategory = document.getElementById("catalogSubcategory")?.value || "all";
   const color = document.getElementById("catalogColor")?.value || "all";
   const size = document.getElementById("catalogSize")?.value || "all";
-  const minPrice = Number(document.getElementById("catalogMinPrice")?.value || 0);
-  const maxPriceRaw = document.getElementById("catalogMaxPrice")?.value || "";
-  const maxPrice = maxPriceRaw === "" ? Infinity : Number(maxPriceRaw);
   const sort = document.getElementById("catalogSort")?.value || "new";
   const rows = publicProducts().filter((product) => {
     const matchesCategory = category === "all" || product.category === category;
     const matchesSubcategory = subcategory === "all" || product.subcategory === subcategory;
     const matchesColor = color === "all" || product.color === color;
-    const activePrice = product.promoPrice > 0 && product.promoPrice < product.price ? product.promoPrice : product.price;
-    const matchesPrice = activePrice >= minPrice && activePrice <= maxPrice;
     const sizeVariants = size === "all" ? product.sizes : product.sizes.filter((variant) => variant.size === size);
     const matchesSize = size === "all" || sizeVariants.some((variant) => !product.tracksStock || variant.stock > 0);
     const haystack = [product.code, product.sku, product.name, product.description, product.category, product.subcategory, product.color].join(" ").toLowerCase();
-    return matchesCategory && matchesSubcategory && matchesColor && matchesPrice && matchesSize && (!query || haystack.includes(query));
+    return matchesCategory && matchesSubcategory && matchesColor && matchesSize && (!query || haystack.includes(query));
   });
   return rows.sort((a, b) => {
     if (sort === "priceAsc") return effectivePrice(a) - effectivePrice(b);
@@ -498,8 +490,6 @@ async function loadRemoteCatalogPage(page = catalogCurrentPage) {
     p_subcategory: filters.subcategory,
     p_color: filters.color,
     p_size: filters.size,
-    p_min_price: filters.minPrice,
-    p_max_price: filters.maxPrice,
     p_sort: filters.sort,
     p_page: page,
     p_page_size: catalogPageSize,
@@ -614,8 +604,6 @@ document.getElementById("catalogCategory")?.addEventListener("change", handleCat
 document.getElementById("catalogSubcategory")?.addEventListener("change", () => reloadCatalogPage({ resetPage: true }));
 document.getElementById("catalogColor")?.addEventListener("change", () => reloadCatalogPage({ resetPage: true }));
 document.getElementById("catalogSize")?.addEventListener("change", () => reloadCatalogPage({ resetPage: true }));
-document.getElementById("catalogMinPrice")?.addEventListener("input", () => reloadCatalogPage({ resetPage: true, debounce: true }));
-document.getElementById("catalogMaxPrice")?.addEventListener("input", () => reloadCatalogPage({ resetPage: true, debounce: true }));
 document.getElementById("catalogSort")?.addEventListener("change", () => reloadCatalogPage({ resetPage: true }));
 document.addEventListener("click", (event) => {
   const pageButton = event.target.closest("[data-catalog-page-delta]");

@@ -123,16 +123,10 @@ a {
 
 .catalog-toolbar {
   display: grid;
-  grid-template-columns: minmax(170px, 1.25fr) repeat(4, minmax(105px, 0.8fr)) minmax(155px, 0.95fr) minmax(120px, 0.75fr);
+  grid-template-columns: minmax(170px, 1.25fr) repeat(4, minmax(105px, 0.8fr)) minmax(120px, 0.75fr);
   gap: 10px;
   align-items: center;
   margin-bottom: 18px;
-}
-
-.price-filter {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
 }
 
 input,
@@ -478,10 +472,6 @@ button.size-chip {
   .catalog-toolbar,
   .product-detail {
     grid-template-columns: 1fr;
-  }
-
-  .price-filter {
-    grid-template-columns: 1fr 1fr;
   }
 
   .catalog-grid {
