@@ -1692,13 +1692,6 @@ function normalizeCloudStockMovement(row = {}) {
   };
 }
 
-function cloudSinceTimestamp(days) {
-  const date = new Date();
-  date.setDate(date.getDate() - Math.max(1, Number(days || 1)));
-  date.setHours(0, 0, 0, 0);
-  return date.toISOString();
-}
-
 function configuredCloudInitialDays(kind) {
   const settings = businessSettings();
   const fallback = kind === "expenses" ? CLOUD_INITIAL_EXPENSE_DAYS : CLOUD_INITIAL_SALES_DAYS;
@@ -1713,7 +1706,7 @@ function cloudModeCovers(currentMode, requestedMode) {
 }
 
 function cloudModeForView(viewId) {
-  return ["reports"].includes(viewId) ? "full" : "initial";
+  return "initial";
 }
 
 async function ensureCloudDataForView(viewId) {
@@ -1740,61 +1733,41 @@ async function loadCloudOperationalData({ mode = "initial", force = true } = {})
   if (cloudOperationalLoadPromise) return cloudOperationalLoadPromise;
 
   cloudOperationalLoadPromise = (async () => {
-    const salesQuery = supabaseClient
-      .from("sales")
-      .select("*,customers(id,name,dni,phone,city),sale_items(*),payments(*)")
-      .is("archived_at", null)
-      .order("sold_at", { ascending: false });
-
     const salesDays = configuredCloudInitialDays("sales");
     const expenseDays = configuredCloudInitialDays("expenses");
-
-    const scopedSalesQuery = requestedMode === "full" || salesDays === 0
-      ? salesQuery
-      : salesQuery.or(`sold_at.gte.${cloudSinceTimestamp(salesDays)},payment_status.neq.paid`);
-
-    const expensesQuery = supabaseClient
-      .from("expenses")
-      .select("*")
-      .is("archived_at", null)
-      .order("expense_at", { ascending: false });
-
-    const scopedExpensesQuery = requestedMode === "full" || expenseDays === 0
-      ? expensesQuery
-      : expensesQuery.gte("expense_at", cloudSinceTimestamp(expenseDays));
-
-  const [{ data: sales, error: salesError }, { data: expenses, error: expensesError }, { data: stock, error: stockError }] = await Promise.all([
-    scopedSalesQuery,
-    scopedExpensesQuery,
-    supabaseClient.from("stock_movements").select("*").order("created_at", { ascending: false }).limit(STOCK_HISTORY_LIMIT),
-  ]);
-  if (salesError) throw new Error(`ventas: ${salesError.message}`);
-  if (expensesError) throw new Error(`gastos: ${expensesError.message}`);
-  if (stockError) throw new Error(`stock: ${stockError.message}`);
-  state.sales = (sales || []).map(normalizeCloudSale).map((sale) => ({
-    ...sale,
-    reference: sale.customerName || "",
-  }));
-  state.expenses = (expenses || [])
-    .filter((expense) => expense.category !== "CompraMercaderia")
-    .map(normalizeCloudExpense);
-  state.purchases = (expenses || [])
-    .filter((expense) => expense.category === "CompraMercaderia")
-    .map((expense) => ({
-      id: expense.id,
-      date: isoDateFromTimestamp(expense.expense_at || expense.created_at),
-      supplier: expense.note || "Compra de Mercadería",
-      category: "CompraMercaderia",
-      behavior: "variable",
-      area: "local",
-      amount: Number(expense.amount || 0),
-      notes: expense.note || "",
-      stockEntryId: expense.operation_id || "",
+    const { data, error } = await supabaseClient.rpc("get_operational_snapshot", {
+      p_sales_days: requestedMode === "full" ? 0 : salesDays,
+      p_expense_days: requestedMode === "full" ? 0 : expenseDays,
+      p_stock_limit: STOCK_HISTORY_LIMIT,
+    });
+    if (error) throw new Error(`carga operativa: ${error.message}`);
+    const sales = Array.isArray(data?.sales) ? data.sales : [];
+    const expenses = Array.isArray(data?.expenses) ? data.expenses : [];
+    const stock = Array.isArray(data?.stock) ? data.stock : [];
+    state.sales = sales.map(normalizeCloudSale).map((sale) => ({
+      ...sale,
+      reference: sale.customerName || "",
     }));
-  state.stockHistory = (stock || []).map(normalizeCloudStockMovement).reverse();
-  cloudOperationalMode = requestedMode;
-  persistStateLocalOnly();
-  return true;
+    state.expenses = expenses
+      .filter((expense) => expense.category !== "CompraMercaderia")
+      .map(normalizeCloudExpense);
+    state.purchases = expenses
+      .filter((expense) => expense.category === "CompraMercaderia")
+      .map((expense) => ({
+        id: expense.id,
+        date: isoDateFromTimestamp(expense.expense_at || expense.created_at),
+        supplier: expense.note || "Compra de Mercadería",
+        category: "CompraMercaderia",
+        behavior: "variable",
+        area: "local",
+        amount: Number(expense.amount || 0),
+        notes: expense.note || "",
+        stockEntryId: expense.operation_id || "",
+      }));
+    state.stockHistory = stock.map(normalizeCloudStockMovement).reverse();
+    cloudOperationalMode = requestedMode;
+    persistStateLocalOnly();
+    return true;
   })();
 
   try {
