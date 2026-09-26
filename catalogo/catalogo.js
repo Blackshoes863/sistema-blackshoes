@@ -161,11 +161,23 @@ function renderSelectOptions(selectId, values, fallbackLabel) {
   select.value = options.includes(selected) ? selected : "all";
 }
 
+function catalogSizeValuesForCategory(products, category = "all") {
+  const normalizedCategory = String(category || "all");
+  return products
+    .filter((product) => normalizedCategory === "all" || product.category === normalizedCategory)
+    .flatMap((product) => product.sizes.map((variant) => variant.size));
+}
+
+function renderCatalogSizeOptions(products = publicProducts()) {
+  const category = document.getElementById("catalogCategory")?.value || "all";
+  renderSelectOptions("catalogSize", catalogSizeValuesForCategory(products, category), "Talles");
+}
+
 function renderFilterOptions(products) {
   renderSelectOptions("catalogCategory", products.map((product) => product.category), "Categorias");
   renderSelectOptions("catalogSubcategory", products.map((product) => product.subcategory), "Subcategorias");
   renderSelectOptions("catalogColor", products.map((product) => product.color), "Colores");
-  renderSelectOptions("catalogSize", products.flatMap((product) => product.sizes.map((variant) => variant.size)), "Talles");
+  renderCatalogSizeOptions(products);
 }
 
 function renderRemoteFilterOptions(filters = {}) {
@@ -538,6 +550,7 @@ async function loadLegacyCatalogProducts(client) {
 
 function reloadCatalogPage({ resetPage = true, debounce = false } = {}) {
   if (!catalogRemotePaging || !catalogClient || isProductDetailPage()) {
+    renderCatalogSizeOptions(publicProducts());
     renderCatalogGrid();
     return;
   }
@@ -552,6 +565,13 @@ function reloadCatalogPage({ resetPage = true, debounce = false } = {}) {
   }
   clearTimeout(catalogSearchTimer);
   catalogSearchTimer = setTimeout(run, 250);
+}
+
+function handleCatalogCategoryChange() {
+  const sizeSelect = document.getElementById("catalogSize");
+  if (sizeSelect) sizeSelect.value = "all";
+  if (!catalogRemotePaging || !catalogClient) renderCatalogSizeOptions(publicProducts());
+  reloadCatalogPage({ resetPage: true });
 }
 
 async function loadCatalogProducts() {
@@ -590,7 +610,7 @@ async function loadCatalogProducts() {
 }
 
 document.getElementById("catalogSearch")?.addEventListener("input", () => reloadCatalogPage({ resetPage: true, debounce: true }));
-document.getElementById("catalogCategory")?.addEventListener("change", () => reloadCatalogPage({ resetPage: true }));
+document.getElementById("catalogCategory")?.addEventListener("change", handleCatalogCategoryChange);
 document.getElementById("catalogSubcategory")?.addEventListener("change", () => reloadCatalogPage({ resetPage: true }));
 document.getElementById("catalogColor")?.addEventListener("change", () => reloadCatalogPage({ resetPage: true }));
 document.getElementById("catalogSize")?.addEventListener("change", () => reloadCatalogPage({ resetPage: true }));
