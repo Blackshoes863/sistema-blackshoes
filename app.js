@@ -233,6 +233,9 @@ const cloudProductsFailures = new Map();
 const cloudCustomersCache = new Map();
 const cloudCustomersLoads = new Map();
 const cloudCustomersFailures = new Map();
+const cloudCustomerDetailCache = new Map();
+const cloudCustomerDetailLoads = new Map();
+const cloudCustomerDetailFailures = new Map();
 const cloudExpensesCache = new Map();
 const cloudExpensesLoads = new Map();
 const cloudExpensesFailures = new Map();
@@ -1618,6 +1621,7 @@ function requestCloudSalesHistoryPage(filters = state.salesHistoryFilters || {},
 function invalidateCloudSalesHistoryCache() {
   cloudSalesHistoryCache.clear();
   cloudSalesHistoryFailures.clear();
+  invalidateCloudCustomerDetailCache();
   invalidateCloudReportSummaryCache();
 }
 
@@ -3663,11 +3667,11 @@ function normalizeSaleDebtPayments(payments = []) {
   return (Array.isArray(payments) ? payments : [])
     .map((payment) => ({
       id: payment.id || uid("debt-pay"),
-      date: normalizeDateInput(payment.date) || todayIso(),
+      date: normalizeDateInput(payment.date) || isoDateFromTimestamp(payment.paid_at || payment.created_at),
       amount: Math.max(0, Number(payment.amount || 0)),
-      paymentMethod: payment.paymentMethod || "efectivo",
-      notes: String(payment.notes || "").trim(),
-      createdAt: payment.createdAt || new Date().toISOString(),
+      paymentMethod: payment.paymentMethod || payment.method || "efectivo",
+      notes: String(payment.notes || payment.note || "").trim(),
+      createdAt: payment.createdAt || payment.created_at || new Date().toISOString(),
     }))
     .filter((payment) => payment.amount > 0);
 }
@@ -8954,6 +8958,109 @@ function requestCloudCustomersPage(filters = state.customerFilters || {}, page =
 function invalidateCloudCustomersCache() {
   cloudCustomersCache.clear();
   cloudCustomersFailures.clear();
+  invalidateCloudCustomerDetailCache();
+}
+
+function cloudCustomerDetailRequest(customerId = state.customerInfoCustomerId, page = state.customerInfoPage || 1) {
+  return {
+    customerId: String(customerId || ""),
+    page: Math.max(1, Number(page || 1)),
+    pageSize: CUSTOMER_INFO_PAGE_SIZE,
+  };
+}
+
+function cloudCustomerDetailKey(request) {
+  return JSON.stringify({
+    customerId: request.customerId,
+    page: request.page,
+    pageSize: request.pageSize,
+  });
+}
+
+function cachedCloudCustomerDetail(customerId = state.customerInfoCustomerId, page = state.customerInfoPage || 1) {
+  return cloudCustomerDetailCache.get(cloudCustomerDetailKey(cloudCustomerDetailRequest(customerId, page)));
+}
+
+function mergeCloudCustomerDetail(data = {}) {
+  const customer = data.customer ? normalizeCloudCustomer(data.customer, data.customer.initial_payments || []) : null;
+  if (customer) {
+    const index = state.customers.findIndex((item) => item.id === customer.id);
+    if (index === -1) state.customers.push(customer);
+    else state.customers[index] = { ...state.customers[index], ...customer };
+  }
+  const pageSales = mergeCloudSalesIntoState(data.sales || []);
+  const debtSales = mergeCloudSalesIntoState(data.debtSales || []);
+  const payments = normalizeSaleDebtPayments(data.payments || []).map((payment, index) => ({
+    ...payment,
+    sourceLabel: data.payments?.[index]?.sourceLabel || data.payments?.[index]?.source_label || "",
+  }));
+  return {
+    customer: customer || state.customers.find((item) => item.id === data.customer?.id),
+    rows: pageSales,
+    debtSales,
+    payments,
+    totalCount: Number(data.totalCount || 0),
+    page: Number(data.page || 1),
+    pageSize: Number(data.pageSize || CUSTOMER_INFO_PAGE_SIZE),
+    loadedAt: Date.now(),
+  };
+}
+
+async function loadCloudCustomerDetail(customerId = state.customerInfoCustomerId, page = state.customerInfoPage || 1, { force = false } = {}) {
+  if (!cloudEnabledWithSession() || !customerId) return null;
+  const request = cloudCustomerDetailRequest(customerId, page);
+  const key = cloudCustomerDetailKey(request);
+  if (!force && cloudCustomerDetailCache.has(key)) return cloudCustomerDetailCache.get(key);
+  if (cloudCustomerDetailLoads.has(key)) return cloudCustomerDetailLoads.get(key);
+  const recentFailureAt = cloudCustomerDetailFailures.get(key) || 0;
+  if (!force && Date.now() - recentFailureAt < 30000) return null;
+  const load = (async () => {
+    const { data, error } = await supabaseClient.rpc("get_customer_detail", {
+      p_customer_id: request.customerId,
+      p_page: request.page,
+      p_page_size: request.pageSize,
+    });
+    if (error) throw new Error(`detalle de cliente: ${error.message}`);
+    const result = mergeCloudCustomerDetail(data || {});
+    cloudCustomerDetailCache.set(key, result);
+    cloudCustomerDetailFailures.delete(key);
+    persistStateLocalOnly();
+    return result;
+  })();
+  cloudCustomerDetailLoads.set(key, load);
+  try {
+    return await load;
+  } catch (error) {
+    cloudCustomerDetailFailures.set(key, Date.now());
+    console.warn("Cloud customer detail failed", error);
+    return null;
+  } finally {
+    cloudCustomerDetailLoads.delete(key);
+  }
+}
+
+function requestCloudCustomerDetail(customerId = state.customerInfoCustomerId, page = state.customerInfoPage || 1) {
+  if (!cloudEnabledWithSession() || !customerId) return;
+  const request = cloudCustomerDetailRequest(customerId, page);
+  const key = cloudCustomerDetailKey(request);
+  if (cloudCustomerDetailCache.has(key) || cloudCustomerDetailLoads.has(key)) return;
+  loadCloudCustomerDetail(customerId, page).then((result) => {
+    if (result && state.customerInfoCustomerId === customerId) renderCustomerInfoSales();
+  });
+}
+
+function invalidateCloudCustomerDetailCache(customerId = "") {
+  if (!customerId) {
+    cloudCustomerDetailCache.clear();
+    cloudCustomerDetailFailures.clear();
+    return;
+  }
+  [...cloudCustomerDetailCache.keys()].forEach((key) => {
+    if (key.includes(`"customerId":"${customerId}"`)) cloudCustomerDetailCache.delete(key);
+  });
+  [...cloudCustomerDetailFailures.keys()].forEach((key) => {
+    if (key.includes(`"customerId":"${customerId}"`)) cloudCustomerDetailFailures.delete(key);
+  });
 }
 
 function filteredCustomers() {
@@ -9181,24 +9288,29 @@ function openCustomerInfoModal(customerId) {
     meta.textContent = detail;
     meta.classList.toggle("is-hidden", !detail);
   }
+  requestCloudCustomerDetail(customer.id, 1);
   renderCustomerInfoSales();
   modal.classList.add("open");
   modal.setAttribute("aria-hidden", "false");
 }
 
 function renderCustomerInfoSales() {
-  const customer = state.customers.find((item) => item.id === state.customerInfoCustomerId);
+  const cloudDetail = cachedCloudCustomerDetail(state.customerInfoCustomerId, state.customerInfoPage);
+  const customer = cloudDetail?.customer || state.customers.find((item) => item.id === state.customerInfoCustomerId);
   const table = document.getElementById("customerInfoSales");
   const pagination = document.getElementById("customerInfoPagination");
   if (!customer || !table) return;
-  renderCustomerDebtPanel(customer);
-  const sales = salesForCustomer(customer)
+  requestCloudCustomerDetail(customer.id, state.customerInfoPage);
+  renderCustomerDebtPanel(customer, cloudDetail);
+  const localSales = salesForCustomer(customer)
     .slice()
     .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
-  const totalPages = Math.max(1, Math.ceil(sales.length / CUSTOMER_INFO_PAGE_SIZE));
+  const sales = cloudDetail ? cloudDetail.rows : localSales;
+  const totalItems = cloudDetail ? cloudDetail.totalCount : localSales.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / CUSTOMER_INFO_PAGE_SIZE));
   const current = Math.min(Math.max(1, Number(state.customerInfoPage || 1)), totalPages);
   const start = (current - 1) * CUSTOMER_INFO_PAGE_SIZE;
-  const rows = sales.slice(start, start + CUSTOMER_INFO_PAGE_SIZE);
+  const rows = cloudDetail ? sales : sales.slice(start, start + CUSTOMER_INFO_PAGE_SIZE);
   state.customerInfoPage = current;
   table.innerHTML = rows.map((sale) => `
     <tr>
@@ -9209,8 +9321,8 @@ function renderCustomerInfoSales() {
       <td>${htmlAttr(saleDetailText(sale))}</td>
       <td><strong>${money(sale.total)}</strong>${saleOutstandingDebt(sale) > 0 ? `<br><small class="debt-amount">Debe ${money(saleOutstandingDebt(sale))}</small>` : ""}</td>
     </tr>
-  `).join("") || `<tr><td colspan="6">Todavía no hay ventas asociadas a este cliente.</td></tr>`;
-  if (pagination) pagination.innerHTML = customerInfoPaginationControls(current, totalPages, sales.length);
+  `).join("") || `<tr><td colspan="6">${cloudEnabledWithSession() && !cloudDetail ? "Cargando ventas del cliente..." : "Todavía no hay ventas asociadas a este cliente."}</td></tr>`;
+  if (pagination) pagination.innerHTML = customerInfoPaginationControls(current, totalPages, totalItems);
 }
 
 function customerDebtPaymentOptions(selected = "efectivo") {
@@ -9219,7 +9331,7 @@ function customerDebtPaymentOptions(selected = "efectivo") {
     .join("");
 }
 
-function renderCustomerDebtPanel(customer) {
+function renderCustomerDebtPanel(customer, detail = null) {
   const panel = document.getElementById("customerDebtPanel");
   const form = document.getElementById("customerDebtPaymentForm");
   const customerInput = document.getElementById("customerDebtCustomerId");
@@ -9227,14 +9339,14 @@ function renderCustomerDebtPanel(customer) {
   const dateInput = document.getElementById("customerDebtPaymentDate");
   const methodSelect = document.getElementById("customerDebtPaymentMethod");
   if (!panel || !form || !saleSelect) return;
-  const debtSales = debtSalesForCustomer(customer);
+  const debtSales = detail ? detail.debtSales : debtSalesForCustomer(customer);
   const initialDebtOutstanding = customerInitialDebtOutstanding(customer);
   const totalDebt = initialDebtOutstanding + sum(debtSales, (sale) => saleOutstandingDebt(sale));
-  const salePayments = salesForCustomer(customer)
+  const salePayments = detail ? [] : salesForCustomer(customer)
     .flatMap((sale) => normalizeSaleDebtPayments(sale.debtPayments).map((payment) => ({ ...payment, sourceLabel: saleOrder(sale) })));
   const initialPayments = normalizeSaleDebtPayments(customer.initialDebtPayments)
     .map((payment) => ({ ...payment, sourceLabel: "Deuda inicial" }));
-  const payments = [...salePayments, ...initialPayments]
+  const payments = (detail?.payments?.length ? detail.payments : [...salePayments, ...initialPayments])
     .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
   panel.innerHTML = `
     <div class="customer-debt-summary ${totalDebt > 0 ? "has-debt" : ""}">
@@ -9300,6 +9412,7 @@ async function registerCustomerDebtPayment(form) {
       });
       invalidateCloudCustomersCache();
       invalidateCloudSalesHistoryCache();
+      invalidateCloudCustomerDetailCache(result.customer?.id || customer.id);
       cloudDashboardSummaryCache.clear();
       if (result.customer && customer.id !== result.customer.id) {
         form.elements.customerId.value = result.customer.id;
@@ -9308,6 +9421,7 @@ async function registerCustomerDebtPayment(form) {
       delete form.dataset.operationId;
       form.elements.customerId.value = result.customer?.id || cloudCustomer.id;
       setDateInput(form.elements.date, todayIso());
+      await loadCloudCustomerDetail(result.customer?.id || cloudCustomer.id, state.customerInfoPage || 1, { force: true });
       loadCloudDashboardSummary(state.selectedMonth || currentMonthKey(), { force: true }).catch((error) => console.warn("Cloud dashboard refresh failed", error));
       saveState();
       renderCustomers();
