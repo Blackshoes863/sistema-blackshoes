@@ -690,11 +690,8 @@
               <h2>Porcentajes</h2>
             </div>
             <form class="settings-grid" id="businessSettingsForm">
-              <label data-module="onlineSales" hidden><span>Comisión Tienda Nube %</span><input name="tiendaNubeCommissionRate" type="number" min="0" step="0.01"></label>
               <label><span>Comisión Mercado Pago %</span><input name="mercadoPagoCommissionRate" type="number" min="0" step="0.01"></label>
-              <label data-module="onlineSales" hidden><span>Comisión Pago nube %</span><input name="pagoNubeCommissionRate" type="number" min="0" step="0.01"></label>
-              <label data-module="onlineSales" hidden><span>Costo Canal 1 %</span><input name="onlineCostInsumos" type="number" min="0" step="0.01"></label>
-              <label data-module="onlineSales" hidden><span>Costo Canal 2 %</span><input name="onlineCostAccesorios" type="number" min="0" step="0.01"></label>
+              <label><span>Costo sin costo cargado %</span><input name="missingCostFallbackPercent" type="number" min="0" max="100" step="0.01"></label>
               <button class="primary" type="submit">Guardar Porcentajes</button>
             </form>
           </section>

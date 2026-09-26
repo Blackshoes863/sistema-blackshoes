@@ -562,6 +562,7 @@ const defaultBusinessSettings = {
   pagoNubeCommissionRate: 0,
   onlineCostInsumos: 0,
   onlineCostAccesorios: 0,
+  missingCostFallbackRate: 0.5,
   cloudInitialSalesDays: 60,
   cloudInitialExpenseDays: 60,
   promoDiscounts: {
@@ -1807,7 +1808,7 @@ async function loadCloudBusinessSettings() {
   if (!cloudEnabledWithSession()) return false;
   const { data, error } = await supabaseClient
     .from("business_settings")
-    .select("business_name, whatsapp_number, default_whatsapp_message, size_availability_mode, out_of_stock_product_mode")
+    .select("business_name, whatsapp_number, default_whatsapp_message, size_availability_mode, out_of_stock_product_mode, missing_cost_fallback_rate")
     .eq("id", "main")
     .maybeSingle();
   if (error) throw new Error(`configuración: ${error.message}`);
@@ -1819,6 +1820,12 @@ async function loadCloudBusinessSettings() {
       defaultWhatsappMessage: data.default_whatsapp_message,
       sizeAvailabilityMode: data.size_availability_mode,
       outOfStockProductMode: data.out_of_stock_product_mode,
+    },
+  });
+  state.businessSettings = businessSettings({
+    businessSettings: {
+      ...state.businessSettings,
+      missingCostFallbackRate: data.missing_cost_fallback_rate,
     },
   });
   return true;
@@ -2121,6 +2128,18 @@ async function saveCloudCatalogSettings(settings) {
   if (error) throw new Error(`guardar configuración: ${error.message}`);
 }
 
+async function saveCloudBusinessSettings(settings) {
+  if (!cloudEnabledWithSession()) throw new Error("Ingresá con tu usuario BlackShoes para guardar porcentajes.");
+  const { error } = await supabaseClient
+    .from("business_settings")
+    .update({
+      missing_cost_fallback_rate: normalizeMissingCostFallbackRate(settings.missingCostFallbackRate),
+      updated_by: supabaseSession.user.id,
+    })
+    .eq("id", "main");
+  if (error) throw new Error(`guardar porcentajes: ${error.message}`);
+}
+
 function catalogProductUrl(product) {
   return new URL(`catalogo/producto.html?slug=${encodeURIComponent(productCatalogSlug(product))}`, window.location.href.replace(/index\.html$/i, "")).href;
 }
@@ -2335,10 +2354,6 @@ function normalizeState(rawState) {
     area: canonicalExpenseArea(expense.area),
   }));
   next.businessSettings = businessSettings(next);
-  if (Number(next.businessSettings.mercadoPagoCommissionRate || 0) === 0) {
-    next.businessSettings.mercadoPagoCommissionRate = MERCADO_PAGO_COMMISSION_RATE_WITH_IVA;
-    next.systemMigrationPending = true;
-  }
   next.monthlyClosures = (next.monthlyClosures || []).map((closure) => ({ ...closure }));
   if (next.historicalResultsImportId !== HISTORICAL_RESULTS_IMPORT_ID) {
     const existingMonthKeys = new Set(next.monthlyClosures.map((closure) => closure.monthKey));
@@ -3768,6 +3783,7 @@ function businessSettings(target = typeof state === "undefined" ? null : state) 
     ...settings,
     promoDiscounts: { ...defaultBusinessSettings.promoDiscounts, ...(settings.promoDiscounts || {}) },
   };
+  merged.missingCostFallbackRate = normalizeMissingCostFallbackRate(merged.missingCostFallbackRate);
   merged.cloudInitialSalesDays = [0, 30, 60, 90, 180, 365].includes(Number(merged.cloudInitialSalesDays))
     ? Number(merged.cloudInitialSalesDays)
     : defaultBusinessSettings.cloudInitialSalesDays;
@@ -3775,6 +3791,24 @@ function businessSettings(target = typeof state === "undefined" ? null : state) 
     ? Number(merged.cloudInitialExpenseDays)
     : defaultBusinessSettings.cloudInitialExpenseDays;
   return merged;
+}
+
+function normalizeMissingCostFallbackRate(value) {
+  const rate = Number(value);
+  if (!Number.isFinite(rate)) return missingProductCostFallbackRate;
+  return Math.min(1, Math.max(0, rate));
+}
+
+function missingCostFallbackPercent(value) {
+  return Number((normalizeMissingCostFallbackRate(value) * 100).toFixed(2));
+}
+
+function missingCostFallbackRateFromPercent(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return missingProductCostFallbackRate;
+  const percent = Number(raw);
+  if (!Number.isFinite(percent)) return missingProductCostFallbackRate;
+  return normalizeMissingCostFallbackRate(percent / 100);
 }
 
 function catalogSettings(target = typeof state === "undefined" ? null : state) {
@@ -3840,7 +3874,7 @@ function itemUnitCost(item) {
   const product = state.products.find((entry) => entry.id === item.productId);
   const productCost = Number(product?.cost || 0);
   if (productCost > 0) return productCost;
-  return Number(item.unitPrice || 0) * missingProductCostFallbackRate;
+  return Number(item.unitPrice || 0) * businessSettings().missingCostFallbackRate;
 }
 
 function saleMerchandiseCost(sale) {
@@ -9955,11 +9989,8 @@ function renderSettings() {
   const form = document.getElementById("businessSettingsForm");
   if (!form) return;
   const settings = businessSettings();
-  form.elements.tiendaNubeCommissionRate.value = settings.tiendaNubeCommissionRate;
   form.elements.mercadoPagoCommissionRate.value = settings.mercadoPagoCommissionRate;
-  form.elements.pagoNubeCommissionRate.value = settings.pagoNubeCommissionRate;
-  form.elements.onlineCostInsumos.value = settings.onlineCostInsumos;
-  form.elements.onlineCostAccesorios.value = settings.onlineCostAccesorios;
+  form.elements.missingCostFallbackPercent.value = missingCostFallbackPercent(settings.missingCostFallbackRate);
   const catalogForm = document.getElementById("catalogSettingsForm");
   const catalog = catalogSettings();
   if (catalogForm) {
@@ -10229,16 +10260,33 @@ function deleteFixedExpenseTemplate(templateId) {
   renderSettings();
 }
 
-function saveBusinessSettingsFromForm(form) {
+async function saveBusinessSettingsFromForm(form) {
   const data = formDataObject(form);
+  const nextSettings = businessSettings({
+    businessSettings: {
+      ...businessSettings(),
+      mercadoPagoCommissionRate: Number(data.mercadoPagoCommissionRate || 0),
+      missingCostFallbackRate: missingCostFallbackRateFromPercent(data.missingCostFallbackPercent),
+      promoDiscounts: { ...defaultBusinessSettings.promoDiscounts },
+    },
+  });
+  try {
+    if (CLOUD_DATA_ENABLED) {
+      if (!cloudEnabledWithSession()) {
+        showAuthError("Ingresá con tu usuario BlackShoes para guardar porcentajes en Supabase.");
+        renderAuthState("Ingresá para guardar en Supabase.");
+        return;
+      }
+      await saveCloudBusinessSettings(nextSettings);
+    }
+  } catch (error) {
+    console.warn("Cloud business settings save failed", error);
+    alert(`No pude guardar los porcentajes en Supabase: ${error.message || "error desconocido"}`);
+    return;
+  }
   state.businessSettings = {
     ...businessSettings(),
-    tiendaNubeCommissionRate: Number(data.tiendaNubeCommissionRate || 0),
-    mercadoPagoCommissionRate: Number(data.mercadoPagoCommissionRate || 0),
-    pagoNubeCommissionRate: Number(data.pagoNubeCommissionRate || 0),
-    onlineCostInsumos: Number(data.onlineCostInsumos || 0),
-    onlineCostAccesorios: Number(data.onlineCostAccesorios || 0),
-    promoDiscounts: { ...defaultBusinessSettings.promoDiscounts },
+    ...nextSettings,
   };
   logActivity("settings", "Guardo porcentajes", "Configuracion de costos y comisiones");
   saveState();
