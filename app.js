@@ -18,20 +18,7 @@ const SUPABASE_MAX_BACKUPS = 15;
 const SUPABASE_PROFILE_CACHE_KEY = "blackshoes-supabase-profile-v1";
 const SUPABASE_SETTINGS_COLLECTION = "settings";
 const SUPABASE_SETTINGS_RECORD_ID = "main";
-const SUPABASE_RECORD_COLLECTIONS = [
-  { collection: "customers", stateKey: "customers" },
-  { collection: "products", stateKey: "products" },
-  { collection: "sales", stateKey: "sales" },
-  { collection: "workshopOrders", stateKey: "workshopOrders" },
-  { collection: "onlineOrders", stateKey: "onlineOrders" },
-  { collection: "arcaDoneOrders", stateKey: "arcaDoneOrders" },
-  { collection: "expenses", stateKey: "expenses" },
-  { collection: "purchases", stateKey: "purchases" },
-  { collection: "stockHistory", stateKey: "stockHistory" },
-  { collection: "monthlyClosures", stateKey: "monthlyClosures" },
-  { collection: "cashClosures", stateKey: "cashClosures" },
-  { collection: "activityLog", stateKey: "activityLog" },
-];
+const SUPABASE_RECORD_COLLECTIONS = [];
 
 let supabaseClient = null;
 let supabaseSession = null;
@@ -227,6 +214,9 @@ const cloudReportSummaryFailures = new Map();
 const cloudSalesHistoryCache = new Map();
 const cloudSalesHistoryLoads = new Map();
 const cloudSalesHistoryFailures = new Map();
+const cloudStockHistoryCache = new Map();
+const cloudStockHistoryLoads = new Map();
+const cloudStockHistoryFailures = new Map();
 const cloudProductsCache = new Map();
 const cloudProductsLoads = new Map();
 const cloudProductsFailures = new Map();
@@ -1682,18 +1672,116 @@ function normalizeCloudStockMovement(row = {}) {
   };
   return {
     id: row.id,
-    date: isoDateFromTimestamp(row.created_at),
-    productId: row.product_id || "",
-    productCode: product?.code || "",
-    productName: product?.description || "Producto",
-    variantId: row.variant_id || "",
-    size: variant?.size || "",
-    type: typeMap[row.movement_type] || "ajuste",
-    quantity: Number(row.quantity_delta || 0),
-    stockAfter: Number(row.stock_after || 0),
+    date: row.date || isoDateFromTimestamp(row.created_at || row.createdAt),
+    productId: row.product_id || row.productId || "",
+    productCode: row.productCode || row.product_code || product?.code || "",
+    productName: row.productName || row.product_name || product?.description || "Producto",
+    variantId: row.variant_id || row.variantId || "",
+    size: row.size || variant?.size || "",
+    type: row.type || typeMap[row.movement_type] || "ajuste",
+    quantity: Number(row.quantity ?? row.quantity_delta ?? 0),
+    stockAfter: Number(row.stockAfter ?? row.stock_after ?? 0),
     note: row.note || "",
-    unitCost: Number(row.unit_cost || 0),
+    unitCost: Number(row.unitCost ?? row.unit_cost ?? 0),
   };
+}
+
+function stockHistoryFiltersFromInputs() {
+  return {
+    productId: document.getElementById("stockHistoryProduct")?.value || "all",
+    productQuery: String(document.getElementById("stockHistoryProductSearch")?.value || "").trim(),
+    type: document.getElementById("stockHistoryType")?.value || "all",
+    from: normalizeDateInput(document.getElementById("stockHistoryFrom")?.value),
+    to: normalizeDateInput(document.getElementById("stockHistoryTo")?.value),
+  };
+}
+
+function cloudStockHistoryRequest(filters = stockHistoryFiltersFromInputs(), page = state.stockHistoryPage || 1) {
+  const productId = filters.productId && filters.productId !== "all" && isUuid(filters.productId)
+    ? filters.productId
+    : null;
+  return {
+    productId,
+    query: String(filters.productQuery || "").trim(),
+    type: filters.type || "all",
+    from: filters.from || "",
+    to: filters.to || "",
+    page: Math.max(1, Number(page || 1)),
+    pageSize: STOCK_HISTORY_PAGE_SIZE,
+  };
+}
+
+function cloudStockHistoryKey(request) {
+  return JSON.stringify({
+    productId: request.productId || "",
+    query: request.query,
+    type: request.type,
+    from: request.from,
+    to: request.to,
+    page: request.page,
+    pageSize: request.pageSize,
+  });
+}
+
+function cachedCloudStockHistoryPage(filters = stockHistoryFiltersFromInputs(), page = state.stockHistoryPage || 1) {
+  return cloudStockHistoryCache.get(cloudStockHistoryKey(cloudStockHistoryRequest(filters, page)));
+}
+
+async function loadCloudStockHistoryPage(filters = stockHistoryFiltersFromInputs(), page = state.stockHistoryPage || 1, { force = false } = {}) {
+  if (!cloudEnabledWithSession()) return null;
+  const request = cloudStockHistoryRequest(filters, page);
+  const key = cloudStockHistoryKey(request);
+  if (!force && cloudStockHistoryCache.has(key)) return cloudStockHistoryCache.get(key);
+  if (cloudStockHistoryLoads.has(key)) return cloudStockHistoryLoads.get(key);
+  const recentFailureAt = cloudStockHistoryFailures.get(key) || 0;
+  if (!force && Date.now() - recentFailureAt < 30000) return null;
+  const load = (async () => {
+    const { data, error } = await supabaseClient.rpc("list_stock_history_page", {
+      p_product_id: request.productId,
+      p_query: request.query,
+      p_type: request.type,
+      p_from: request.from || null,
+      p_to: request.to || null,
+      p_page: request.page,
+      p_page_size: request.pageSize,
+    });
+    if (error) throw new Error(`historial de stock: ${error.message}`);
+    const result = {
+      rows: (data?.rows || []).map(normalizeCloudStockMovement),
+      totalCount: Number(data?.totalCount || 0),
+      page: Number(data?.page || request.page),
+      pageSize: Number(data?.pageSize || request.pageSize),
+      loadedAt: Date.now(),
+    };
+    cloudStockHistoryCache.set(key, result);
+    cloudStockHistoryFailures.delete(key);
+    return result;
+  })();
+  cloudStockHistoryLoads.set(key, load);
+  try {
+    return await load;
+  } catch (error) {
+    cloudStockHistoryFailures.set(key, Date.now());
+    console.warn("Cloud stock history failed", error);
+    return null;
+  } finally {
+    cloudStockHistoryLoads.delete(key);
+  }
+}
+
+function requestCloudStockHistoryPage(filters = stockHistoryFiltersFromInputs(), page = state.stockHistoryPage || 1) {
+  if (!cloudEnabledWithSession()) return;
+  const request = cloudStockHistoryRequest(filters, page);
+  const key = cloudStockHistoryKey(request);
+  if (cloudStockHistoryCache.has(key) || cloudStockHistoryLoads.has(key)) return;
+  loadCloudStockHistoryPage(filters, page).then((result) => {
+    if (result && document.getElementById("stockHistoryModal")?.classList.contains("open")) renderStockHistoryTable();
+  });
+}
+
+function invalidateCloudStockHistoryCache() {
+  cloudStockHistoryCache.clear();
+  cloudStockHistoryFailures.clear();
 }
 
 function configuredCloudInitialDays(kind) {
@@ -1878,6 +1966,7 @@ function requestCloudDashboardSummary(monthKey = state.selectedMonth || currentM
 
 async function loadCloudData({ mode = "initial", force = false } = {}) {
   invalidateCloudSalesHistoryCache();
+  invalidateCloudStockHistoryCache();
   invalidateCloudProductsCache();
   invalidateCloudCustomersCache();
   invalidateCloudExpensesCache();
@@ -1986,6 +2075,7 @@ async function saveCloudLocalSale(cart, customer) {
     p_items: items,
   });
   if (error) throw new Error(`registrar venta: ${error.message}`);
+  invalidateCloudStockHistoryCache();
   return mergeCloudSalesIntoState(data ? [data] : [])[0] || data;
 }
 
@@ -2066,6 +2156,9 @@ async function saveCloudStockEntry(entry) {
     p_next_price: nextPrice,
   });
   if (error) throw new Error(`cargar stock: ${error.message}`);
+  invalidateCloudStockHistoryCache();
+  invalidateCloudProductsCache();
+  invalidateCloudExpensesCache();
 }
 
 async function archiveCloudRecord(kind, id) {
@@ -2637,11 +2730,8 @@ function remoteSettingsSnapshot(value = {}) {
     historicalMonthlyDetails: value.historicalMonthlyDetails || {},
     historicalCategoryImportId: value.historicalCategoryImportId || "",
     historicalResultsImportId: value.historicalResultsImportId || "",
-    onlineResolvedMissingOrders: value.onlineResolvedMissingOrders || [],
-    onlineOrderSequence: value.onlineOrderSequence || {},
     customProductCategories: normalizeCustomProductCategories(value.customProductCategories),
     userLastSeen: normalizeUserLastSeen(value.userLastSeen),
-    deletedRecords: normalizeDeletedRecords(value.deletedRecords),
   };
 }
 
@@ -2652,11 +2742,8 @@ function applyRemoteSettings(target, settings = {}) {
   target.historicalMonthlyDetails = settings.historicalMonthlyDetails || target.historicalMonthlyDetails;
   target.historicalCategoryImportId = settings.historicalCategoryImportId || target.historicalCategoryImportId;
   target.historicalResultsImportId = settings.historicalResultsImportId || target.historicalResultsImportId;
-  target.onlineResolvedMissingOrders = settings.onlineResolvedMissingOrders || target.onlineResolvedMissingOrders;
-  target.onlineOrderSequence = settings.onlineOrderSequence || target.onlineOrderSequence;
   target.customProductCategories = normalizeCustomProductCategories(settings.customProductCategories || target.customProductCategories);
   target.userLastSeen = normalizeUserLastSeen(settings.userLastSeen || target.userLastSeen);
-  target.deletedRecords = normalizeDeletedRecords(settings.deletedRecords || target.deletedRecords);
 }
 
 function remoteRecordRowsFromState(value = {}) {
@@ -6514,26 +6601,27 @@ function renderStockHistoryFilters() {
 }
 
 function renderStockHistoryTable() {
-  const productId = document.getElementById("stockHistoryProduct")?.value || "all";
-  const productQuery = String(document.getElementById("stockHistoryProductSearch")?.value || "").trim().toLowerCase();
-  const type = document.getElementById("stockHistoryType")?.value || "all";
-  const from = normalizeDateInput(document.getElementById("stockHistoryFrom")?.value);
-  const to = normalizeDateInput(document.getElementById("stockHistoryTo")?.value);
-  const rows = state.stockHistory
+  const filters = stockHistoryFiltersFromInputs();
+  const cloudPage = cachedCloudStockHistoryPage(filters, state.stockHistoryPage);
+  if (cloudEnabledWithSession()) requestCloudStockHistoryPage(filters, state.stockHistoryPage);
+  const productQuery = String(filters.productQuery || "").trim().toLowerCase();
+  const localRows = state.stockHistory
     .filter((item) => {
-      if (productId !== "all") return item.productId === productId;
+      if (filters.productId !== "all") return item.productId === filters.productId;
       if (!productQuery) return true;
       return [item.productCode, item.productName].some((field) => String(field || "").toLowerCase().includes(productQuery));
     })
-    .filter((item) => type === "all" || item.type === type)
-    .filter((item) => !from || item.date >= from)
-    .filter((item) => !to || item.date <= to)
+    .filter((item) => filters.type === "all" || item.type === filters.type)
+    .filter((item) => !filters.from || item.date >= filters.from)
+    .filter((item) => !filters.to || item.date <= filters.to)
     .slice()
     .reverse();
-  const totalPages = Math.max(1, Math.ceil(rows.length / STOCK_HISTORY_PAGE_SIZE));
+  const rows = cloudPage ? cloudPage.rows : localRows;
+  const totalItems = cloudPage ? cloudPage.totalCount : localRows.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / STOCK_HISTORY_PAGE_SIZE));
   const current = Math.min(Math.max(1, Number(state.stockHistoryPage || 1)), totalPages);
-  const start = (current - 1) * STOCK_HISTORY_PAGE_SIZE;
-  const pageRows = rows.slice(start, start + STOCK_HISTORY_PAGE_SIZE);
+  const start = cloudPage ? 0 : (current - 1) * STOCK_HISTORY_PAGE_SIZE;
+  const pageRows = cloudPage ? rows : rows.slice(start, start + STOCK_HISTORY_PAGE_SIZE);
   state.stockHistoryPage = current;
   document.getElementById("stockHistoryTable").innerHTML = pageRows.map((item) => `
     <tr>
@@ -6544,9 +6632,9 @@ function renderStockHistoryTable() {
       <td>${item.stockAfter}</td>
       <td>${item.note || "-"}</td>
     </tr>
-  `).join("") || `<tr><td colspan="6">Sin Movimientos para esos Filtros.</td></tr>`;
+  `).join("") || `<tr><td colspan="6">${cloudEnabledWithSession() && !cloudPage ? "Cargando movimientos..." : "Sin Movimientos para esos Filtros."}</td></tr>`;
   const pagination = document.getElementById("stockHistoryPagination");
-  if (pagination) pagination.innerHTML = stockHistoryPaginationControls(current, totalPages, rows.length);
+  if (pagination) pagination.innerHTML = stockHistoryPaginationControls(current, totalPages, totalItems);
 }
 
 function openStockHistoryModal() {
@@ -12026,6 +12114,7 @@ document.addEventListener("click", (event) => {
     }
     if (event.target.dataset.pageKind === "stockHistory") {
       state.stockHistoryPage = Number(state.stockHistoryPage || 1) + delta;
+      saveUiState();
       renderStockHistoryTable();
     }
     if (event.target.dataset.pageKind === "customerInfo") {
