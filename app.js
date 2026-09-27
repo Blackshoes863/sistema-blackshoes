@@ -11026,26 +11026,40 @@ async function importBackupFile(file) {
   }
 }
 
-function exportExcelBackup() {
-  const monthKey = state.selectedMonth || currentMonthKey();
-  const closure = monthlyClosureMetrics(monthKey);
-  const expenseData = expenseRows();
+function buildExcelBackupWorkbook({
+  monthKey = state.selectedMonth || currentMonthKey(),
+  summary = null,
+  sales = state.sales,
+  onlineOrders = state.onlineOrders,
+  expenseData = expenseRows(),
+  products = state.products,
+  customers = state.customers,
+  monthlyClosures = state.monthlyClosures || [],
+  activityLog = state.activityLog || [],
+  backupState = state,
+} = {}) {
+  const closure = summary || monthlyClosureMetrics(monthKey);
+  const income = Number(closure.income ?? closure.monthRevenue ?? 0);
+  const expenseTotal = Number(closure.expenseTotal ?? closure.monthExpenses ?? 0);
+  const merchandiseCost = Number(closure.merchandiseCost ?? closure.monthMerchandiseCost ?? 0);
+  const result = Number(closure.result ?? closure.monthResult ?? (income - expenseTotal - merchandiseCost));
+  const salesCount = Number(closure.salesCount ?? closure.monthSalesCount ?? 0);
   const reportRows = [
     ["Campo", "Valor"],
-    ["Mes", closure.label],
-    ["Ingresos Local", closure.localIncome],
-    ["Ingresos Web", closure.webIncome],
-    ["Envios Web", closure.shipping],
-    ["Ingresos Resultado", closure.income],
-    ["Gastos", closure.expenseTotal],
-    ["Costo Mercaderia", closure.merchandiseCost],
-    ["Resultado", closure.result],
-    ["Ventas", closure.salesCount],
+    ["Mes", closure.label || monthLabel(monthKey)],
+    ["Ingresos Local", Number(closure.localIncome ?? closure.monthRevenue ?? income)],
+    ["Ingresos Web", Number(closure.webIncome || 0)],
+    ["Envios Web", Number(closure.shipping || 0)],
+    ["Ingresos Resultado", income],
+    ["Gastos", expenseTotal],
+    ["Costo Mercaderia", merchandiseCost],
+    ["Resultado", result],
+    ["Ventas", salesCount],
     ["Exportado", new Date().toLocaleString("es-AR")],
   ];
   const salesRows = [
     ["Fecha", "Canal", "Orden", "Cliente", "DNI", "Medio", "Plataforma", "Importe", "Descuento", "Importe Venta", "Envio", "Total Cobrado", "Costo Mercaderia"],
-    ...state.sales.map((sale) => [
+    ...sales.map((sale) => [
       sale.date,
       saleChannelLabel(sale),
       saleOrder(sale),
@@ -11063,7 +11077,7 @@ function exportExcelBackup() {
   ];
   const onlineRows = [
     ["Fecha", "Orden", "Cliente", "DNI", "Tienda", "Provincia", "Medio", "Plataforma", "Importe", "Descuento", "Importe Venta", "Envio", "Total ARCA", "Costo Estimado"],
-    ...state.onlineOrders.map((order) => [
+    ...onlineOrders.map((order) => [
       order.date,
       order.orderNumber,
       order.customerName || "",
@@ -11095,7 +11109,7 @@ function exportExcelBackup() {
   ];
   const productRows = [
     ["Codigo", "Descripcion", "Color", "Categoria", "Subcategoria", "Precio", "Precio Promo", "Costo", "Stock", "Talles", "Publicado", "Control Stock"],
-    ...state.products.map((product) => [
+    ...products.map((product) => [
       product.code,
       product.description,
       product.color || "",
@@ -11112,19 +11126,18 @@ function exportExcelBackup() {
   ];
   const customerRows = [
     ["Cliente", "DNI", "Telefono", "Direccion", "Ventas", "Total Comprado", "Ticket Promedio"],
-    ...state.customers.map((customer) => {
-      const sales = salesForCustomer(customer);
-      const total = sum(sales, (sale) => sale.total);
-      return [customer.name, customer.dni || "", customer.phone || "", customer.address || "", sales.length, total, sales.length ? total / sales.length : 0];
+    ...customers.map((customer) => {
+      const stats = customerStats(customer);
+      return [customer.name, customer.dni || "", customer.phone || "", customer.address || "", stats.salesCount, stats.total, stats.ticket];
     }),
   ];
   const closureRows = [
     ["Mes", "Cerrado", "Ingresos", "Envios", "Gastos", "Mercaderia", "Resultado", "Ventas"],
-    ...(state.monthlyClosures || []).map((item) => [item.label || monthLabel(item.monthKey), item.closedAt || "", item.income, item.shipping, item.expenseTotal, item.merchandiseCost, item.result, item.salesCount]),
+    ...monthlyClosures.map((item) => [item.label || monthLabel(item.monthKey), item.closedAt || "", item.income, item.shipping, item.expenseTotal, item.merchandiseCost, item.result, item.salesCount]),
   ];
   const activityRows = [
     ["Fecha", "Usuario", "Tipo", "Accion", "Detalle"],
-    ...(state.activityLog || []).map((entry) => [
+    ...activityLog.map((entry) => [
       formatActivityDate(entry.at),
       entry.user || "",
       activityTypeLabel(entry.type),
@@ -11132,9 +11145,9 @@ function exportExcelBackup() {
       entry.detail || "",
     ]),
   ];
-  const backupChunks = JSON.stringify(state, null, 2).match(/.{1,28000}/gs) || [""];
+  const backupChunks = JSON.stringify(backupState, null, 2).match(/.{1,28000}/gs) || [""];
   const backupRows = [["Parte", "JSON"], ...backupChunks.map((chunk, index) => [index + 1, chunk])];
-  const workbook = xlsxWorkbookBlob([
+  return xlsxWorkbookBlob([
     { name: "Resumen", rows: reportRows },
     { name: "Ventas", rows: salesRows },
     { name: "Ventas Online", rows: onlineRows },
@@ -11145,7 +11158,71 @@ function exportExcelBackup() {
     { name: "Movimientos", rows: activityRows },
     { name: "Backup JSON", rows: backupRows },
   ]);
-  downloadBlob(`${BLACKSHOES_TECHNICAL_NAME}-respaldo-${todayIso()}.xlsx`, workbook);
+}
+
+async function loadCloudExcelExportData() {
+  const monthKey = state.selectedMonth || currentMonthKey();
+  const { data, error } = await supabaseClient.rpc("get_excel_export_data", {
+    p_month: `${monthKey}-01`,
+    p_today: todayIso(),
+  });
+  if (error) throw new Error(`exportar excel: ${error.message}`);
+  const products = (data?.products || []).map(normalizeCloudProduct);
+  const previousProducts = state.products;
+  state.products = products.length ? products : previousProducts;
+  try {
+    const sales = (data?.sales || []).map(normalizeCloudSale);
+    const customers = (data?.customers || []).map((customer) => normalizeCloudCustomer(customer, customer.initial_payments || []));
+    const expenseData = Array.isArray(data?.expenses) ? data.expenses : [];
+    const rawExpenses = Array.isArray(data?.rawExpenses) ? data.rawExpenses : [];
+    const backupExpenses = rawExpenses
+      .filter((expense) => expense.category !== "CompraMercaderia")
+      .map(normalizeCloudExpense);
+    const backupPurchases = rawExpenses
+      .filter((expense) => expense.category === "CompraMercaderia")
+      .map(normalizeCloudPurchaseExpense);
+    const backupState = normalizeState({
+      ...state,
+      sales,
+      products,
+      customers,
+      expenses: backupExpenses,
+      purchases: backupPurchases,
+      localSyncPending: false,
+      systemMigrationPending: false,
+    });
+    return {
+      monthKey,
+      summary: data?.summary ? {
+        ...normalizeCloudDashboardSummary(data.summary, monthKey),
+        label: monthLabel(monthKey),
+      } : null,
+      sales,
+      products,
+      customers,
+      expenseData,
+      onlineOrders: state.onlineOrders,
+      monthlyClosures: state.monthlyClosures || [],
+      activityLog: state.activityLog || [],
+      backupState,
+    };
+  } finally {
+    state.products = previousProducts;
+  }
+}
+
+async function exportExcelBackup() {
+  try {
+    const source = cloudEnabledWithSession()
+      ? await loadCloudExcelExportData()
+      : {};
+    const workbook = buildExcelBackupWorkbook(source);
+    downloadBlob(`${BLACKSHOES_TECHNICAL_NAME}-respaldo-${todayIso()}.xlsx`, workbook);
+    showActionToast(cloudEnabledWithSession() ? "Excel exportado desde Supabase." : "Excel exportado.");
+  } catch (error) {
+    console.warn("Excel export failed", error);
+    alert(`No pude exportar el Excel: ${error.message || "error desconocido"}`);
+  }
 }
 
 function renderExpenses() {
