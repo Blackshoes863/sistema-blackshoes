@@ -2029,7 +2029,7 @@ function cloudSaleItemsFromCart(cart) {
       variant_id: variant?.id || null,
       quantity: Number(item.quantity || 1),
       unit_price: Number(item.unitPrice || product.price || 0),
-      unit_cost: Number(item.unitCost || product.cost || 0),
+      unit_cost: saleItemUnitCostForPayload(item, product),
     };
   });
 }
@@ -3938,7 +3938,19 @@ function itemUnitCost(item) {
   const product = state.products.find((entry) => entry.id === item.productId);
   const productCost = Number(product?.cost || 0);
   if (productCost > 0) return productCost;
-  return Number(item.unitPrice || 0) * businessSettings().missingCostFallbackRate;
+  return estimatedMissingUnitCostFromPrice(item.unitPrice);
+}
+
+function estimatedMissingUnitCostFromPrice(unitPrice) {
+  return Math.round(Number(unitPrice || 0) * businessSettings().missingCostFallbackRate);
+}
+
+function saleItemUnitCostForPayload(item, product) {
+  const ownCost = Number(item.unitCost || 0);
+  if (ownCost > 0) return ownCost;
+  const productCost = Number(product?.cost || 0);
+  if (productCost > 0) return productCost;
+  return estimatedMissingUnitCostFromPrice(item.unitPrice || product?.price || 0);
 }
 
 function saleMerchandiseCost(sale) {
