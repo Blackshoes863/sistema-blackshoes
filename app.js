@@ -1011,7 +1011,11 @@ function normalizeProductSizeVariants(value = []) {
     const size = normalizeProductDescription(row.size || row.talle || row.name || "").toUpperCase();
     if (!size) return;
     const stock = Math.max(0, Math.floor(Number(row.stock || row.quantity || 0)));
-    bySize.set(size, { size, stock });
+    bySize.set(size, {
+      id: row.id || "",
+      size,
+      stock,
+    });
   });
   return [...bySize.values()];
 }
