@@ -2038,6 +2038,42 @@ function cloudSaleItemsFromCart(cart) {
   });
 }
 
+async function resolveCloudSaleVariant(product, item) {
+  if (!product?.tracksStock) return null;
+  const selectedSize = normalizeProductDescription(item.size || "").toUpperCase();
+  if (!selectedSize) {
+    throw new Error(`El producto ${product.description} requiere elegir un talle.`);
+  }
+  const localVariant = normalizeProductSizeVariants(product.sizeVariants)
+    .find((entry) => entry.size === selectedSize && entry.id);
+  if (localVariant?.id) return localVariant;
+  if (!cloudEnabledWithSession() || !isUuid(product.id)) {
+    throw new Error(`El producto ${product.description} requiere una variedad/talle válido.`);
+  }
+  const { data, error } = await supabaseClient
+    .from("product_variants")
+    .select("id,size,current_stock,active,archived_at")
+    .eq("product_id", product.id)
+    .eq("active", true)
+    .is("archived_at", null);
+  if (error) throw new Error(`buscar talle: ${error.message}`);
+  const cloudVariants = (data || []).map((variant) => ({
+    id: variant.id,
+    size: variant.size,
+    stock: variant.current_stock,
+  }));
+  if (cloudVariants.length) {
+    product.sizeVariants = normalizeProductSizeVariants(cloudVariants);
+    product.stock = productSizeStockTotal(product);
+    persistStateLocalOnly();
+  }
+  const cloudVariant = normalizeProductSizeVariants(cloudVariants).find((entry) => entry.size === selectedSize && entry.id);
+  if (!cloudVariant?.id) {
+    throw new Error(`No encontré el talle ${selectedSize} de ${product.description} en Supabase.`);
+  }
+  return cloudVariant;
+}
+
 async function ensureCloudManualProduct() {
   if (!cloudEnabledWithSession()) throw new Error("Ingresá con tu usuario BlackShoes para usar ventas manuales.");
   const { data, error } = await supabaseClient.rpc("ensure_manual_product");
@@ -2049,7 +2085,7 @@ async function cloudSaleItemsFromCartAsync(cart) {
   const manualProductId = (cart.items || []).some((item) => item.manual || !item.productId)
     ? await ensureCloudManualProduct()
     : null;
-  return (cart.items || []).map((item) => {
+  return Promise.all((cart.items || []).map(async (item) => {
     if (item.manual || !item.productId) {
       return {
         product_id: manualProductId,
@@ -2059,8 +2095,19 @@ async function cloudSaleItemsFromCartAsync(cart) {
         unit_cost: Number(item.unitCost || 0),
       };
     }
-    return cloudSaleItemsFromCart({ items: [item] })[0];
-  });
+    const product = state.products.find((entry) => entry.id === item.productId);
+    if (!product || !isUuid(product.id)) {
+      throw new Error(`El item "${item.description || "Manual"}" no está vinculado a un producto de Supabase.`);
+    }
+    const variant = await resolveCloudSaleVariant(product, item);
+    return {
+      product_id: product.id,
+      variant_id: variant?.id || null,
+      quantity: Number(item.quantity || 1),
+      unit_price: Number(item.unitPrice || product.price || 0),
+      unit_cost: saleItemUnitCostForPayload(item, product),
+    };
+  }));
 }
 
 async function saveCloudLocalSale(cart, customer) {
