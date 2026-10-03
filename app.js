@@ -7862,7 +7862,7 @@ function reportPeriodRange() {
       to: new Date(`${todayIso()}T23:59:59`),
     };
   }
-  if (state.reportPeriod === "all") return { from: new Date("2000-01-01"), to: null };
+  if (state.reportPeriod === "all") return { from: new Date(2000, 0, 1), to: null };
   if (state.reportPeriod === "year") return { from: new Date(now.getFullYear() - 1, now.getMonth(), now.getDate()), to: null };
   if (state.reportPeriod === "custom") {
     const from = normalizeDateInput(state.reportCustomFrom) || monthAgoIso();
@@ -11534,7 +11534,7 @@ function renderCloudMarginTrend(summary) {
     if (averages) averages.innerHTML = "";
     return;
   }
-  const metrics = sortTrendMetrics(summary.trend || []);
+  const metrics = sortTrendMetrics(visibleHistoricalTrend(summary.trend || []));
   const maxValue = Math.max(1, ...metrics.flatMap((entry) => [entry.income, entry.costs, Math.abs(entry.margin)]));
   if (!metrics.length) {
     chart.innerHTML = `<div class="empty-state">Sin Datos para este Período.</div>`;
@@ -11865,6 +11865,19 @@ function sortTrendMetrics(metrics) {
   if (order === "marginDesc") return [...metrics].sort((a, b) => b.margin - a.margin);
   if (order === "marginAsc") return [...metrics].sort((a, b) => a.margin - b.margin);
   return [...metrics].sort((a, b) => a.key.localeCompare(b.key));
+}
+
+function trendEntryHasActivity(entry) {
+  return Boolean(Number(entry?.income || 0) || Number(entry?.costs || 0) || Number(entry?.margin || 0));
+}
+
+function visibleHistoricalTrend(entries = []) {
+  if (state.reportPeriod !== "all") return entries;
+  const chronological = [...entries].sort((a, b) => String(a.key || "").localeCompare(String(b.key || "")));
+  const first = chronological.findIndex(trendEntryHasActivity);
+  if (first < 0) return [];
+  const last = chronological.length - 1 - [...chronological].reverse().findIndex(trendEntryHasActivity);
+  return chronological.slice(first, last + 1);
 }
 
 function marginTrendMetrics() {
