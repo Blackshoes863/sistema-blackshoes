@@ -1471,12 +1471,14 @@ function normalizeCloudSale(row = {}) {
     .map(normalizeCloudPayment);
   const items = (row.sale_items || []).map((item) => {
     const product = state.products.find((entry) => entry.id === item.product_id);
+    const rawCode = item.sku || product?.code || "";
+    const isManualInternal = String(rawCode).trim().toUpperCase() === "MANUAL_INTERNAL";
     return {
       productId: item.product_id || "",
       variantId: item.variant_id || "",
-      code: item.sku || product?.code || "",
+      code: isManualInternal ? "" : rawCode,
       description: item.product_name || product?.description || "Producto",
-      category: product?.category || "Manual",
+      category: isManualInternal ? "Manual" : product?.category || "Manual",
       subcategory: product?.subcategory || "",
       color: item.color || product?.color || "",
       size: item.size || "",
@@ -1484,7 +1486,7 @@ function normalizeCloudSale(row = {}) {
       unitPrice: Number(item.unit_price || 0),
       unitCost: Number(item.unit_cost || 0),
       tracksStock: Boolean(item.variant_id),
-      manual: !item.product_id,
+      manual: isManualInternal || !item.product_id,
     };
   });
   return {
@@ -3887,6 +3889,37 @@ function paymentMethodName(methodId) {
   return state.paymentMethods.find((method) => method.id === methodId)?.name || "Sin Medio";
 }
 
+function reportPaymentMethodName(methodId) {
+  const raw = String(methodId || "").trim();
+  const key = raw.toLowerCase();
+  const labels = {
+    efectivo: "Efectivo",
+    debito: "Débito",
+    transferencia: "Transferencias",
+    transferencias: "Transferencias",
+    qr: "QR",
+    credito: "Crédito",
+    web: "Web",
+    "sin-medio": "Sin Medio",
+    "sin medio": "Sin Medio",
+  };
+  if (labels[key]) return labels[key];
+  const localName = paymentMethodName(raw);
+  if (!localName || localName === "Sin Medio") return "Sin Medio";
+  return localName.charAt(0).toUpperCase() + localName.slice(1);
+}
+
+function normalizePaymentSummaryMap(payments = {}) {
+  const normalized = {};
+  Object.entries(payments || {}).forEach(([method, detail]) => {
+    const label = reportPaymentMethodName(method);
+    if (!normalized[label]) normalized[label] = { amount: 0, count: 0 };
+    normalized[label].amount += Number(detail?.amount || 0);
+    normalized[label].count += Number(detail?.count || 0);
+  });
+  return normalized;
+}
+
 function paymentMethodOptionLabel(method, saleType = "minorista", skipPaymentAdjustment = false) {
   return method.name;
 }
@@ -5361,7 +5394,9 @@ function canonicalProductCategory(category) {
 }
 
 function canonicalSaleItemCategory(item, sale) {
+  if (item?.manual) return "Manual";
   const value = canonicalCategory(item.category);
+  if (value === "Manual") return "Manual";
   if (value === "Taller" && sale.source !== "taller") return "Manual";
   return value;
 }
@@ -7886,7 +7921,7 @@ function normalizeCloudReportSummary(data = {}) {
     subcategories: data.subcategories || {},
     subcategoryCategories: data.subcategoryCategories || {},
     provinces: data.provinces || {},
-    payments: data.payments || {},
+    payments: normalizePaymentSummaryMap(data.payments || {}),
     expenseDetails: data.expenseDetails || {},
     trend: Array.isArray(data.trend) ? data.trend.map((entry) => ({
       key: entry.key,
@@ -11971,7 +12006,7 @@ function reportDetailData(sales) {
       provinces[sale.province].amount += Number(sale.total || 0);
       provinces[sale.province].count += 1;
     }
-    const payment = paymentMethodName(sale.paymentMethod || (sale.channel === "local" ? "efectivo" : "web"));
+    const payment = reportPaymentMethodName(sale.paymentMethod || (sale.channel === "local" ? "efectivo" : "web"));
     if (!payments[payment]) payments[payment] = { amount: 0, count: 0 };
     payments[payment].amount += Number(sale.total || 0);
     payments[payment].count += 1;
