@@ -9054,10 +9054,17 @@ function renderCatalog() {
   const cloudPage = cachedCloudProductsPage(state.productFilters, state.productPage);
   const cloudMeta = cachedCloudProductsMeta(state.productFilters);
   const waitingCloudPage = cloudEnabledWithSession() && !cloudPage;
+  const requestedPage = Math.max(1, Number(state.productPage || 1));
   const products = filteredProducts();
-  const totalItems = cloudPage ? cloudPage.totalCount : cloudMeta ? cloudMeta.totalCount : products.length;
+  const totalItems = cloudPage
+    ? cloudPage.totalCount
+    : cloudMeta
+      ? cloudMeta.totalCount
+      : waitingCloudPage
+        ? Math.max(products.length, requestedPage * PRODUCT_PAGE_SIZE)
+        : products.length;
   const totalPages = Math.max(1, Math.ceil(totalItems / PRODUCT_PAGE_SIZE));
-  const current = Math.min(Math.max(1, Number(state.productPage || 1)), totalPages);
+  const current = waitingCloudPage && !cloudMeta ? requestedPage : Math.min(requestedPage, totalPages);
   const pageProducts = cloudPage && cloudPage.page === current
     ? cloudPage.rows
     : waitingCloudPage
