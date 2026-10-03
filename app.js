@@ -1040,11 +1040,13 @@ function serializeProductSizeVariants(product) {
 }
 
 const clothingSizeOptions = ["S", "M", "L", "XL", "XXL"];
+const accessorySizeOptions = ["TALLE ÚNICO", ...clothingSizeOptions];
 const shoeSizeOptions = Array.from({ length: 12 }, (_, index) => String(index + 34));
 
 function productSuggestedSizes(category = document.getElementById("productCategory")?.value || "") {
   const normalized = canonicalProductCategory(category);
   if (normalized === "Zapatillas") return shoeSizeOptions;
+  if (normalized === "Accesorios") return accessorySizeOptions;
   if (baseProductCategories.includes(normalized) && normalized !== "Accesorios") return clothingSizeOptions;
   return [];
 }
