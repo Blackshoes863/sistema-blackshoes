@@ -220,6 +220,7 @@ const cloudStockHistoryFailures = new Map();
 const cloudProductsCache = new Map();
 const cloudProductsLoads = new Map();
 const cloudProductsFailures = new Map();
+const cloudProductsMetaCache = new Map();
 const cloudCustomersCache = new Map();
 const cloudCustomersLoads = new Map();
 const cloudCustomersFailures = new Map();
@@ -6155,6 +6156,32 @@ function cloudProductsKey(request) {
   });
 }
 
+function cloudProductsMetaKey(filters = state.productFilters || {}) {
+  const request = cloudProductsRequest(filters, 1);
+  return JSON.stringify({
+    query: request.query,
+    sort: request.sort,
+    category: request.category,
+    subcategory: request.subcategory,
+    stock: request.stock,
+    published: request.published,
+    pageSize: request.pageSize,
+  });
+}
+
+function rememberCloudProductsMeta(filters = state.productFilters || {}, page = null) {
+  if (!page) return;
+  cloudProductsMetaCache.set(cloudProductsMetaKey(filters), {
+    totalCount: Number(page.totalCount || 0),
+    pageSize: Number(page.pageSize || PRODUCT_PAGE_SIZE),
+    loadedAt: Number(page.loadedAt || Date.now()),
+  });
+}
+
+function cachedCloudProductsMeta(filters = state.productFilters || {}) {
+  return cloudProductsMetaCache.get(cloudProductsMetaKey(filters));
+}
+
 function cachedCloudProductsPage(filters = state.productFilters || {}, page = state.productPage || 1) {
   return cloudProductsCache.get(cloudProductsKey(cloudProductsRequest(filters, page)));
 }
@@ -6163,7 +6190,11 @@ async function loadCloudProductsPage(filters = state.productFilters || {}, page 
   if (!cloudEnabledWithSession()) return null;
   const request = cloudProductsRequest(filters, page);
   const key = cloudProductsKey(request);
-  if (!force && cloudProductsCache.has(key)) return cloudProductsCache.get(key);
+  if (!force && cloudProductsCache.has(key)) {
+    const cached = cloudProductsCache.get(key);
+    rememberCloudProductsMeta(filters, cached);
+    return cached;
+  }
   if (cloudProductsLoads.has(key)) return cloudProductsLoads.get(key);
   const recentFailureAt = cloudProductsFailures.get(key) || 0;
   if (!force && Date.now() - recentFailureAt < 30000) return null;
@@ -6188,6 +6219,7 @@ async function loadCloudProductsPage(filters = state.productFilters || {}, page 
       loadedAt: Date.now(),
     };
     cloudProductsCache.set(key, result);
+    rememberCloudProductsMeta(filters, result);
     cloudProductsFailures.delete(key);
     persistStateLocalOnly();
     return result;
@@ -6217,6 +6249,7 @@ function requestCloudProductsPage(filters = state.productFilters || {}, page = s
 function invalidateCloudProductsCache() {
   cloudProductsCache.clear();
   cloudProductsFailures.clear();
+  cloudProductsMetaCache.clear();
 }
 
 function productsForPriceUpdate() {
@@ -8996,12 +9029,16 @@ function renderCatalog() {
   renderProductFilters();
   requestCloudProductsPage(state.productFilters, state.productPage);
   const cloudPage = cachedCloudProductsPage(state.productFilters, state.productPage);
+  const cloudMeta = cachedCloudProductsMeta(state.productFilters);
+  const waitingCloudPage = cloudEnabledWithSession() && !cloudPage;
   const products = filteredProducts();
-  const totalItems = cloudPage ? cloudPage.totalCount : products.length;
+  const totalItems = cloudPage ? cloudPage.totalCount : cloudMeta ? cloudMeta.totalCount : products.length;
   const totalPages = Math.max(1, Math.ceil(totalItems / PRODUCT_PAGE_SIZE));
   const current = Math.min(Math.max(1, Number(state.productPage || 1)), totalPages);
   const pageProducts = cloudPage && cloudPage.page === current
     ? cloudPage.rows
+    : waitingCloudPage
+      ? []
     : products.slice((current - 1) * PRODUCT_PAGE_SIZE, current * PRODUCT_PAGE_SIZE);
   state.productPage = current;
   document.getElementById("productsTable").innerHTML = pageProducts.map((product) => `
@@ -9019,7 +9056,7 @@ function renderCatalog() {
         <button class="tiny-action danger-action" data-delete-product="${product.id}" type="button" title="Eliminar Producto">Eliminar</button>
       </td>
     </tr>
-  `).join("") || `<tr><td colspan="8">${cloudEnabledWithSession() && !cloudPage ? "Cargando productos..." : "No hay Productos para esos Filtros."}</td></tr>`;
+  `).join("") || `<tr><td colspan="8">${waitingCloudPage ? "Cargando productos..." : "No hay Productos para esos Filtros."}</td></tr>`;
   const pagination = document.getElementById("productsPagination");
   if (pagination) pagination.innerHTML = productPaginationControls(current, totalPages, totalItems);
 }
