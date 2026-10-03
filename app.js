@@ -6246,6 +6246,19 @@ function requestCloudProductsPage(filters = state.productFilters || {}, page = s
   });
 }
 
+function prefetchNextCloudProductsPage(filters = state.productFilters || {}, current = state.productPage || 1, totalPages = 1) {
+  if (!cloudEnabledWithSession()) return;
+  const nextPage = Number(current || 1) + 1;
+  if (nextPage > Number(totalPages || 1)) return;
+  const request = cloudProductsRequest(filters, nextPage);
+  const key = cloudProductsKey(request);
+  if (cloudProductsCache.has(key) || cloudProductsLoads.has(key)) return;
+  setTimeout(() => {
+    if (state.activeView !== "products") return;
+    loadCloudProductsPage({ ...(filters || {}) }, nextPage).catch((error) => console.warn("Cloud products prefetch failed", error));
+  }, 0);
+}
+
 function invalidateCloudProductsCache() {
   cloudProductsCache.clear();
   cloudProductsFailures.clear();
@@ -9059,6 +9072,7 @@ function renderCatalog() {
   `).join("") || `<tr><td colspan="8">${waitingCloudPage ? "Cargando productos..." : "No hay Productos para esos Filtros."}</td></tr>`;
   const pagination = document.getElementById("productsPagination");
   if (pagination) pagination.innerHTML = productPaginationControls(current, totalPages, totalItems);
+  if (cloudPage) prefetchNextCloudProductsPage(state.productFilters, current, totalPages);
 }
 
 function openCatalogProduct(productId) {
