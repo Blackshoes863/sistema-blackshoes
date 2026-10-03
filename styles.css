@@ -1332,6 +1332,30 @@ h3 {
   opacity: 0.5;
 }
 
+#productsPagination {
+  position: sticky;
+  bottom: 14px;
+  z-index: 20;
+  display: flex;
+  justify-content: flex-end;
+  pointer-events: none;
+}
+
+#productsPagination:empty {
+  display: none;
+}
+
+#productsPagination .pagination {
+  max-width: 100%;
+  flex-wrap: wrap;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 10px 28px rgba(17, 24, 39, 0.12);
+  pointer-events: auto;
+}
+
 .full {
   width: 100%;
 }
