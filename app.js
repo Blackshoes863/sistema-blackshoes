@@ -5460,6 +5460,14 @@ function nextProductCode(category, subcategory = "") {
   return `${prefix}${Date.now().toString().slice(-4)}`;
 }
 
+async function nextCloudProductCode(category, subcategory = "") {
+  if (!cloudEnabledWithSession() || isAccessoryCategory(category)) return nextProductCode(category, subcategory);
+  const prefix = prefixForCategory(category, subcategory);
+  const { data, error } = await supabaseClient.rpc("get_next_product_code", { p_prefix: prefix });
+  if (error) throw new Error(`codigo producto: ${error.message}`);
+  return String(data || nextProductCode(category, subcategory)).trim().toUpperCase();
+}
+
 function barcodeFromCode(code) {
   return code ? `BASE-${String(code).trim().toUpperCase()}` : "";
 }
@@ -5498,10 +5506,11 @@ function renderProductSubcategoryOptions(selectedCategory = null, selectedSubcat
   select.disabled = subcategories.length === 0;
 }
 
-function updateProductCode() {
+function updateProductCode({ force = false } = {}) {
   const category = document.getElementById("productCategory")?.value;
   const subcategory = document.getElementById("productSubcategory")?.value;
   const code = document.getElementById("productCode");
+  const editingId = document.getElementById("editingProductId")?.value || "";
   const locked = isAccessoryCategory(category);
   const hint = document.getElementById("productCodeHint");
   if (code) {
@@ -5515,9 +5524,33 @@ function updateProductCode() {
     return;
   }
   if (code && category) {
-    if (locked || !code.value) code.value = nextProductCode(category, subcategory);
+    const localCode = nextProductCode(category, subcategory);
+    const shouldAutofill = force || locked || !code.value;
+    if (shouldAutofill) code.value = localCode;
     updateProductBarcode();
+    if (!editingId && !locked && cloudEnabledWithSession()) {
+      nextCloudProductCode(category, subcategory)
+        .then((cloudCode) => {
+          const currentCategory = document.getElementById("productCategory")?.value;
+          const currentSubcategory = document.getElementById("productSubcategory")?.value;
+          const currentCode = document.getElementById("productCode");
+          if (!currentCode || currentCategory !== category || currentSubcategory !== subcategory) return;
+          if (force || !currentCode.value || currentCode.value === localCode) {
+            currentCode.value = cloudCode;
+            updateProductBarcode();
+          }
+        })
+        .catch((error) => console.warn("Cloud product code failed", error));
+    }
   }
+}
+
+async function ensureProductCodeBeforeSave({ code, category, subcategory, editingId }) {
+  if (editingId || isAccessoryCategory(category) || !cloudEnabledWithSession()) return code;
+  const cleanCode = String(code || "").trim().toUpperCase();
+  const localSuggestion = nextProductCode(category, subcategory);
+  if (cleanCode && cleanCode !== localSuggestion) return cleanCode;
+  return nextCloudProductCode(category, subcategory);
 }
 
 function updateProductBarcode() {
@@ -13056,7 +13089,7 @@ document.getElementById("manualItemForm").addEventListener("submit", (event) => 
   closeManualItemModal();
 });
 
-document.getElementById("productForm").addEventListener("submit", (event) => {
+document.getElementById("productForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   renderProductImagePreview();
   syncProductVariantInputFromRows();
@@ -13070,7 +13103,19 @@ document.getElementById("productForm").addEventListener("submit", (event) => {
   }
   const now = new Date().toISOString();
   const category = canonicalProductCategory(data.category);
-  const code = isAccessoryCategory(category) ? accessoryPriceCode(data.price) : String(data.code || "").trim().toUpperCase();
+  let code = isAccessoryCategory(category) ? accessoryPriceCode(data.price) : String(data.code || "").trim().toUpperCase();
+  try {
+    code = await ensureProductCodeBeforeSave({
+      code,
+      category,
+      subcategory: String(data.subcategory || "").trim(),
+      editingId,
+    });
+  } catch (error) {
+    console.warn("Cloud product code before save failed", error);
+    alert(`No pude calcular el código del producto en Supabase: ${error.message || "error desconocido"}`);
+    return;
+  }
   if (!isAccessoryCategory(category) && state.products.some((product) => product.id !== editingId && String(product.code || "").toUpperCase() === code)) {
     alert("Ese Código ya existe. Elegí otro Código libre.");
     return;
