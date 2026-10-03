@@ -6240,10 +6240,16 @@ function requestCloudProductsPage(filters = state.productFilters || {}, page = s
   if (!cloudEnabledWithSession()) return;
   const request = cloudProductsRequest(filters, page);
   const key = cloudProductsKey(request);
-  if (cloudProductsCache.has(key) || cloudProductsLoads.has(key)) return;
-  loadCloudProductsPage(filters, page).then((result) => {
-    if (result && state.activeView === "products") renderCatalog();
-  });
+  const renderIfCurrent = (result) => {
+    const currentKey = cloudProductsKey(cloudProductsRequest(state.productFilters, state.productPage));
+    if (result && state.activeView === "products" && currentKey === key) renderCatalog();
+  };
+  if (cloudProductsCache.has(key)) return;
+  if (cloudProductsLoads.has(key)) {
+    cloudProductsLoads.get(key).then(renderIfCurrent);
+    return;
+  }
+  loadCloudProductsPage(filters, page).then(renderIfCurrent);
 }
 
 function prefetchCloudProductsPage(filters = state.productFilters || {}, page = state.productPage || 1) {
