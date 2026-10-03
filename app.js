@@ -1039,9 +1039,12 @@ function serializeProductSizeVariants(product) {
     .join("\n");
 }
 
-const clothingSizeOptions = ["S", "M", "L", "XL", "XXL"];
+const clothingSizeOptions = ["S", "S/M", "M", "M/L", "L", "L/XL", "XL", "XL/XXL", "XXL"];
 const accessorySizeOptions = ["TALLE ÚNICO", ...clothingSizeOptions];
-const shoeSizeOptions = Array.from({ length: 12 }, (_, index) => String(index + 34));
+const baseShoeSizeOptions = Array.from({ length: 12 }, (_, index) => String(index + 34));
+const shoeSizeOptions = baseShoeSizeOptions.flatMap((size, index) =>
+  index < baseShoeSizeOptions.length - 1 ? [size, `${size}/${baseShoeSizeOptions[index + 1]}`] : [size]
+);
 
 function productSuggestedSizes(category = document.getElementById("productCategory")?.value || "") {
   const normalized = canonicalProductCategory(category);

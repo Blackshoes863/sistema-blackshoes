@@ -161,11 +161,25 @@ function renderSelectOptions(selectId, values, fallbackLabel) {
   select.value = options.includes(selected) ? selected : "all";
 }
 
+function sizeFilterTokens(size = "") {
+  return String(size || "")
+    .trim()
+    .toUpperCase()
+    .split(/\s*\/\s*/)
+    .filter(Boolean);
+}
+
+function sizeMatchesFilter(variantSize = "", selectedSize = "all") {
+  const selected = String(selectedSize || "all").trim().toUpperCase();
+  if (selected === "ALL") return true;
+  return sizeFilterTokens(variantSize).includes(selected);
+}
+
 function catalogSizeValuesForCategory(products, category = "all") {
   const normalizedCategory = String(category || "all");
   return products
     .filter((product) => normalizedCategory === "all" || product.category === normalizedCategory)
-    .flatMap((product) => product.sizes.map((variant) => variant.size));
+    .flatMap((product) => product.sizes.flatMap((variant) => sizeFilterTokens(variant.size)));
 }
 
 function renderCatalogSizeOptions(products = publicProducts()) {
@@ -227,7 +241,7 @@ function filteredProducts() {
     const matchesCategory = category === "all" || product.category === category;
     const matchesSubcategory = subcategory === "all" || product.subcategory === subcategory;
     const matchesColor = color === "all" || product.color === color;
-    const sizeVariants = size === "all" ? product.sizes : product.sizes.filter((variant) => variant.size === size);
+    const sizeVariants = size === "all" ? product.sizes : product.sizes.filter((variant) => sizeMatchesFilter(variant.size, size));
     const matchesSize = size === "all" || sizeVariants.some((variant) => !product.tracksStock || variant.stock > 0);
     const haystack = [product.code, product.sku, product.name, product.description, product.category, product.subcategory, product.color].join(" ").toLowerCase();
     return matchesCategory && matchesSubcategory && matchesColor && matchesSize && (!query || haystack.includes(query));
