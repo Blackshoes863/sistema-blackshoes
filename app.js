@@ -11697,6 +11697,13 @@ function renderCloudReportSummary(summary) {
     marginNode.classList.toggle("negative", summary.margin < 0);
     marginNode.classList.toggle("positive", summary.margin >= 0);
   }
+  const fakeMargin = Number(summary.fakeIncome || 0) - Number(summary.expenseTotal || 0) - Number(summary.merchandiseCost || 0);
+  const fakeMarginNode = document.getElementById("reportFakeMargin");
+  if (fakeMarginNode) {
+    fakeMarginNode.textContent = signedMoney(fakeMargin);
+    fakeMarginNode.classList.toggle("negative", fakeMargin < 0);
+    fakeMarginNode.classList.toggle("positive", fakeMargin >= 0);
+  }
   document.getElementById("reportTicket").textContent = money(summary.ticket);
   renderWaterfall(summary.income, summary.fixedExpenses, summary.variableExpenses, summary.merchandiseCost, incomeSplit);
   renderCloudMarginTrend(summary);
@@ -11756,6 +11763,13 @@ function renderReports() {
     marginNode.textContent = signedMoney(margin);
     marginNode.classList.toggle("negative", margin < 0);
     marginNode.classList.toggle("positive", margin >= 0);
+  }
+  const fakeMargin = fakeIncome - expenseTotal - merchandiseCost;
+  const fakeMarginNode = document.getElementById("reportFakeMargin");
+  if (fakeMarginNode) {
+    fakeMarginNode.textContent = signedMoney(fakeMargin);
+    fakeMarginNode.classList.toggle("negative", fakeMargin < 0);
+    fakeMarginNode.classList.toggle("positive", fakeMargin >= 0);
   }
   document.getElementById("reportTicket").textContent = money(ticket);
   renderWaterfall(income, fixedExpenses, variableExpenses, merchandiseCost, incomeSplit);
