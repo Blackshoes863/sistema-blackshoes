@@ -27,7 +27,7 @@ let catalogClient = null;
 let catalogRemotePaging = false;
 let catalogCurrentPage = 1;
 let catalogTotalCount = 0;
-let catalogPageSize = 24;
+let catalogPageSize = 20;
 let catalogSearchTimer = null;
 
 function catalogRootPath() {
@@ -387,7 +387,7 @@ function renderCatalogGrid() {
   const grid = document.getElementById("catalogGrid");
   const empty = document.getElementById("catalogEmpty");
   if (!grid) return;
-  const products = catalogRemotePaging ? publicProducts() : filteredProducts();
+  const products = catalogRemotePaging ? catalogProducts : filteredProducts();
   grid.innerHTML = products.map((product) => {
     const slug = productSlug(product);
     const firstSize = product.sizes.find((variant) => variant.stock > 0)?.size || product.sizes[0]?.size || "";

@@ -349,7 +349,7 @@ body.auth-locked .app-shell {
 
 .product-filters {
   display: grid;
-  grid-template-columns: minmax(240px, 1fr) minmax(120px, 150px) minmax(160px, 210px) minmax(160px, 210px) minmax(160px, 210px);
+  grid-template-columns: minmax(220px, 1fr) minmax(120px, 150px) repeat(4, minmax(145px, 210px));
   gap: 10px;
   margin: 14px 0;
 }

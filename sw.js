@@ -1,4 +1,4 @@
-const CACHE_NAME = "blackshoes-control-v99";
+const CACHE_NAME = "blackshoes-control-v100";
 const ASSETS = [
   "./",
   "./index.html",
@@ -6,9 +6,9 @@ const ASSETS = [
   "./catalogo",
   "./catalogo/producto.html",
   "./catalogo/config.js",
-  "./catalogo/catalogo.css?v=10",
-  "./catalogo/catalogo.js?v=16",
-  "./styles.css?v=94",
+  "./catalogo/catalogo.css?v=11",
+  "./catalogo/catalogo.js?v=17",
+  "./styles.css?v=95",
   "./app.js?v=281",
   "./manifest.json?v=6",
   "./assets/blackshoes-header-logo.png",
