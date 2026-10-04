@@ -16,7 +16,7 @@
     <link rel="manifest" href="manifest.json?v=6">
     <link rel="icon" type="image/png" sizes="32x32" href="assets/blackshoes-favicon-32.png?v=2">
     <link rel="apple-touch-icon" href="assets/blackshoes-apple-touch.png?v=2">
-    <link rel="stylesheet" href="styles.css?v=93">
+    <link rel="stylesheet" href="styles.css?v=94">
   </head>
   <body class="auth-locked">
     <div class="app-shell">
@@ -607,7 +607,9 @@
               </label>
             </div>
             <div class="metric-grid compact report-metrics">
-              <article class="metric"><span>Ingresos</span><strong id="reportIncome">$0</strong></article>
+              <article class="metric"><span>Ingresos ficticios</span><strong id="reportFakeIncome">$0</strong></article>
+              <article class="metric"><span>Ingresos reales</span><strong id="reportIncome">$0</strong></article>
+              <article class="metric"><span>Cobro de deudas</span><strong id="reportDebtCollections">$0</strong></article>
               <article class="metric" id="reportShippingCard" hidden><span>Envíos</span><strong id="reportShipping">$0</strong></article>
               <article class="metric"><span>Gastos</span><strong id="reportExpenses">$0</strong></article>
               <article class="metric"><span>Costo de Mercadería</span><strong id="reportPurchases">$0</strong></article>
@@ -624,9 +626,9 @@
                 <div class="trend-panel-head">
                   <div>
                     <span class="modal-kicker">Evolución</span>
-                    <h3>Ventas, gastos y margen</h3>
+                    <h3>Ingresos, gastos y margen</h3>
                     <div class="chart-legend trend-legend">
-                      <span><i class="dot trend-dot-sales"></i>Ventas</span>
+                      <span><i class="dot trend-dot-sales"></i>Ingresos reales</span>
                       <span><i class="dot trend-dot-expenses"></i>Gastos</span>
                       <span><i class="dot trend-dot-margin"></i>Margen</span>
                     </div>
@@ -1535,10 +1537,10 @@
     <div class="action-toast" id="actionToast" role="status" aria-live="polite"></div>
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="app.js?v=278"></script>
+    <script src="app.js?v=279"></script>
     <script>
       if ("serviceWorker" in navigator && location.protocol !== "file:") {
-        navigator.serviceWorker.register("sw.js?v=294");
+        navigator.serviceWorker.register("sw.js?v=295");
       }
     </script>
   </body>

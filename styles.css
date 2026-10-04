@@ -17,6 +17,8 @@
   --income-local: #4d8b57;
   --income-insumos: #a9d6e5;
   --income-accesorios: #b6d7a8;
+  --income-real-sales: #4d8b57;
+  --income-debt-collections: #a9d6e5;
   --margin-positive: #2f6f4e;
   --shadow: 0 10px 26px rgba(19, 31, 43, 0.06);
 }
@@ -1234,6 +1236,14 @@ td.row-actions .remove-line + .remove-line {
 
 .dot-income {
   background: var(--income-local);
+}
+
+.dot-sales-real {
+  background: var(--income-real-sales);
+}
+
+.dot-debt-collections {
+  background: var(--income-debt-collections);
 }
 
 .dot-insumos {
@@ -3174,6 +3184,14 @@ tr:last-child td {
 
 .split-accesorios {
   background: var(--income-accesorios);
+}
+
+.split-sales-real {
+  background: var(--income-real-sales);
+}
+
+.split-debt-collections {
+  background: var(--income-debt-collections);
 }
 
 .split-expense {

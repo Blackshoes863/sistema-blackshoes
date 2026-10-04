@@ -7964,10 +7964,17 @@ function reportSummaryKey(request = reportPeriodRequest()) {
 }
 
 function normalizeCloudReportSummary(data = {}) {
+  const fakeIncome = Number(data.fakeIncome ?? data.generatedIncome ?? data.totalIncome ?? data.income ?? 0);
+  const salesRealIncome = Number(data.salesRealIncome ?? data.saleRealIncome ?? data.realSalesIncome ?? data.realIncome ?? data.income ?? 0);
+  const debtCollections = Number(data.debtCollections ?? data.debtPaymentsIncome ?? 0);
+  const realIncome = Number(data.realIncome ?? data.cashIncome ?? (salesRealIncome + debtCollections));
   return {
     salesCount: Number(data.salesCount || 0),
-    income: Number(data.income || 0),
-    realIncome: Number(data.realIncome || data.income || 0),
+    income: realIncome,
+    fakeIncome,
+    salesRealIncome,
+    debtCollections,
+    realIncome,
     localIncome: Number(data.localIncome || 0),
     webInsumos: Number(data.webInsumos || 0),
     webAccesorios: Number(data.webAccesorios || 0),
@@ -7986,7 +7993,10 @@ function normalizeCloudReportSummary(data = {}) {
     expenseDetails: data.expenseDetails || {},
     trend: Array.isArray(data.trend) ? data.trend.map((entry) => ({
       key: entry.key,
-      income: Number(entry.income || 0),
+      income: Number(entry.realIncome ?? entry.income ?? 0),
+      fakeIncome: Number(entry.fakeIncome ?? entry.generatedIncome ?? entry.income ?? 0),
+      salesRealIncome: Number(entry.salesRealIncome ?? entry.realIncome ?? entry.income ?? 0),
+      debtCollections: Number(entry.debtCollections ?? 0),
       costs: Number(entry.costs || 0),
       margin: Number(entry.margin || 0),
       marginRate: Number(entry.marginRate || 0),
@@ -11622,7 +11632,7 @@ function renderCloudMarginTrend(summary) {
   if (averages) {
     const negativeAverage = average.margin < 0;
     averages.innerHTML = `
-      <span class="trend-average-pill sales"><i></i>Prom. ventas: ${trendMoney(average.income)}</span>
+      <span class="trend-average-pill sales"><i></i>Prom. ingresos: ${trendMoney(average.income)}</span>
       <span class="trend-average-pill expenses"><i></i>Prom. gastos: ${trendMoney(average.costs)}</span>
       <span class="trend-average-pill margin ${negativeAverage ? "negative" : ""}"><i></i>Prom. margen: ${trendMoney(average.margin)}</span>
     `;
@@ -11645,7 +11655,7 @@ function renderCloudMarginTrend(summary) {
     const marginHeight = Math.max(5, Math.abs(entry.margin) / maxValue * 100);
     const negative = entry.margin < 0;
     return `
-      <div class="trend-month" title="${monthLabel(entry.key)} | Ventas: ${money(entry.income)} | Gastos: ${money(entry.costs)} | Margen: ${signedMoney(entry.margin)}">
+      <div class="trend-month" title="${monthLabel(entry.key)} | Ingresos reales: ${money(entry.income)} | Ventas reales: ${money(entry.salesRealIncome || entry.income)} | Cobro de deudas: ${money(entry.debtCollections || 0)} | Gastos: ${money(entry.costs)} | Margen: ${signedMoney(entry.margin)}">
         <div class="trend-bars">
           <span class="trend-bar sales" style="height:${salesHeight}%"></span>
           <span class="trend-bar expenses" style="height:${expensesHeight}%"></span>
@@ -11667,12 +11677,16 @@ function renderCloudReportSummary(summary) {
     const salesCount = Number(summary.salesCount || 0);
     salesCounter.textContent = `${salesCount} ${salesCount === 1 ? "venta" : "ventas"} en el periodo`;
   }
-  const incomeSplit = state.reportScope === "total"
-    ? { local: summary.localIncome, insumos: summary.webInsumos, accesorios: summary.webAccesorios }
-    : state.reportScope === "web"
-      ? { insumos: summary.webInsumos, accesorios: summary.webAccesorios }
-      : { local: summary.income };
+  const incomeSplit = {
+    kind: "real-income",
+    salesReal: summary.salesRealIncome,
+    debtCollections: summary.debtCollections,
+  };
+  const fakeIncomeNode = document.getElementById("reportFakeIncome");
+  if (fakeIncomeNode) fakeIncomeNode.textContent = money(summary.fakeIncome);
   document.getElementById("reportIncome").textContent = money(summary.income);
+  const debtCollectionsNode = document.getElementById("reportDebtCollections");
+  if (debtCollectionsNode) debtCollectionsNode.textContent = money(summary.debtCollections);
   const shippingNode = document.getElementById("reportShipping");
   if (shippingNode) shippingNode.textContent = money(summary.shipping);
   document.getElementById("reportExpenses").textContent = money(summary.expenseTotal);
@@ -11713,8 +11727,11 @@ function renderReports() {
   }
   const expenses = operatingExpenseRows().filter((item) => inPeriod(item.date) && expenseCountsInResult(item) && reportExpenseMatchesScope(item));
   const historicalMetrics = historicalClosuresInReportPeriod().map((closure) => closureScopeMetrics(closure, state.reportScope));
-  const realIncome = sum(sales, (sale) => sale.total);
-  const income = realIncome + sum(historicalMetrics, (entry) => entry.income);
+  const currentSalesIncome = sum(sales, (sale) => sale.total);
+  const debtCollections = reportDebtCollectionsTotal();
+  const salesRealIncome = sum(sales, saleInitialPaidAmount) + sum(historicalMetrics, (entry) => entry.income);
+  const fakeIncome = currentSalesIncome + sum(historicalMetrics, (entry) => entry.income);
+  const income = salesRealIncome + debtCollections;
   const shippingTotal = state.reportScope === "web"
     ? sum(sales.filter((sale) => sale.channel === "online"), (sale) => Number(sale.shippingAmount || 0)) + sum(historicalMetrics, (entry) => entry.shipping)
     : 0;
@@ -11722,17 +11739,13 @@ function renderReports() {
   const variableExpenses = sum(expenses.filter((item) => item.kind !== "fijo" && item.behavior !== "fijo"), reportExpenseAmount) + sum(historicalMetrics, (entry) => entry.variableExpenses);
   const expenseTotal = fixedExpenses + variableExpenses;
   const merchandiseCost = sum(sales, (sale) => saleMerchandiseCost(sale)) + sum(historicalMetrics, (entry) => entry.merchandiseCost);
-  const ticket = sales.length ? realIncome / sales.length : 0;
-  const totalHistoricalMetrics = historicalClosuresInReportPeriod().map((closure) => closureScopeMetrics(closure, "total"));
-  const localIncome = sum(periodSales.filter((sale) => sale.channel === "local"), (sale) => sale.total) + sum(totalHistoricalMetrics, (entry) => entry.localIncome);
-  const webInsumos = sum(periodSales.filter((sale) => sale.channel === "online" && saleBucket(sale) === "insumos"), (sale) => sale.total) + sum(totalHistoricalMetrics, (entry) => entry.webInsumos);
-  const webAccesorios = sum(periodSales.filter((sale) => sale.channel === "online" && saleBucket(sale) === "accesorios"), (sale) => sale.total) + sum(totalHistoricalMetrics, (entry) => entry.webAccesorios);
-  const incomeSplit = state.reportScope === "total"
-    ? { local: localIncome, insumos: webInsumos, accesorios: webAccesorios }
-    : state.reportScope === "web"
-      ? { insumos: webInsumos, accesorios: webAccesorios }
-      : { local: income };
+  const ticket = sales.length ? currentSalesIncome / sales.length : 0;
+  const incomeSplit = { kind: "real-income", salesReal: salesRealIncome, debtCollections };
+  const fakeIncomeNode = document.getElementById("reportFakeIncome");
+  if (fakeIncomeNode) fakeIncomeNode.textContent = money(fakeIncome);
   document.getElementById("reportIncome").textContent = money(income);
+  const debtCollectionsNode = document.getElementById("reportDebtCollections");
+  if (debtCollectionsNode) debtCollectionsNode.textContent = money(debtCollections);
   const shippingNode = document.getElementById("reportShipping");
   if (shippingNode) shippingNode.textContent = money(shippingTotal);
   document.getElementById("reportExpenses").textContent = money(expenseTotal);
@@ -11830,6 +11843,19 @@ function waterfallBar(start, end, cls, minPoint, range, split = null) {
   if (!split || cls !== "income" || end <= 0) {
     return `<div class="waterfall-segment" style="left:${left}%;width:${width}%"><div class="bar-fill ${fillClass}"></div></div>`;
   }
+  if (split.kind === "real-income") {
+    const salesReal = Number(split.salesReal || 0);
+    const debtCollections = Number(split.debtCollections || 0);
+    const totalReal = Math.max(1, salesReal + debtCollections);
+    return `
+    <div class="waterfall-segment" style="left:${left}%;width:${width}%">
+      <div class="bar-fill income split-income">
+        ${salesReal ? `<span class="split-segment split-sales-real" style="width:${salesReal / totalReal * 100}%" title="Ingresos por ventas reales: ${money(salesReal)}"></span>` : ""}
+        ${debtCollections ? `<span class="split-segment split-debt-collections" style="width:${debtCollections / totalReal * 100}%" title="Cobro de deudas: ${money(debtCollections)}"></span>` : ""}
+      </div>
+    </div>
+  `;
+  }
   const local = Number(split.local || 0);
   const insumos = Number(split.insumos || 0);
   const accesorios = Number(split.accesorios || 0);
@@ -11854,12 +11880,15 @@ function renderWaterfall(income, fixedExpenses, variableExpenses, purchases, inc
   const maxPoint = Math.max(1, income);
   const range = Math.max(1, maxPoint - minPoint);
   const totalExpenses = fixedExpenses + variableExpenses;
-  const legendItems = multipleChannels && state.reportScope === "total"
+  const realIncomeLegendItems = incomeSplit?.kind === "real-income"
+    ? `<span><i class="dot dot-sales-real"></i>Ingresos por ventas reales</span><span><i class="dot dot-debt-collections"></i>Cobro de deudas</span>`
+    : "";
+  const legendItems = realIncomeLegendItems || (multipleChannels && state.reportScope === "total"
     ? `<span><i class="dot dot-local"></i>Local</span><span><i class="dot dot-insumos"></i>Canal 1</span><span><i class="dot dot-accesorios"></i>Canal 2</span>`
     : multipleChannels && state.reportScope === "web"
       ? `<span><i class="dot dot-insumos"></i>Canal 1</span><span><i class="dot dot-accesorios"></i>Canal 2</span>`
-      : "";
-  const incomeLegendItem = `<span><i class="dot dot-income"></i>Ingresos</span>`;
+      : "");
+  const incomeLegendItem = incomeSplit?.kind === "real-income" ? "" : `<span><i class="dot dot-income"></i>Ingresos</span>`;
   const costLegendItems = `<span><i class="dot dot-expense-fixed"></i>Gastos Fijos</span><span><i class="dot dot-expense-variable"></i>Gastos Variables</span>`;
   const legend = incomeLegendItem || legendItems || costLegendItems ? `
     <div class="chart-legend waterfall-legend">
@@ -11879,7 +11908,7 @@ function renderWaterfall(income, fixedExpenses, variableExpenses, purchases, inc
   rows[3] = ["Costo de Mercader\u00eda", -purchases, afterExpenses, margin, "purchase"];
   rows.length = 0;
   rows.push(
-    ["Ingresos", income, 0, income, "income"],
+    [incomeSplit?.kind === "real-income" ? "Ingresos Reales" : "Ingresos", income, 0, income, "income"],
     ["Gastos", -totalExpenses, income, afterExpenses, "expense"],
     ["Costo de Mercader\u00eda", -purchases, afterExpenses, margin, "purchase"],
     ["Margen", margin, 0, margin, "margin"],
@@ -11909,8 +11938,30 @@ function monthKeysBetween(fromKey, toKey) {
   return keys;
 }
 
+function reportDebtCollections() {
+  const salePayments = (state.sales || []).flatMap((sale) =>
+    normalizeSaleDebtPayments(sale.debtPayments).map((payment) => ({ ...payment, sale }))
+  );
+  const customerInitialPayments = state.reportScope === "web" ? [] : (state.customers || []).flatMap((customer) =>
+    normalizeSaleDebtPayments(customer.initialDebtPayments).map((payment) => ({ ...payment, sale: null }))
+  );
+  return [...salePayments, ...customerInitialPayments].filter((payment) => {
+    if (payment.sale && !reportSaleMatchesScope(payment.sale)) return false;
+    return true;
+  });
+}
+
+function reportDebtCollectionsTotal() {
+  return sum(reportDebtCollections(), (payment) => inPeriod(payment.date) ? payment.amount : 0);
+}
+
+function reportDebtCollectionsTotalForMonth(monthKey) {
+  return sum(reportDebtCollections(), (payment) => monthKeyFromDate(payment.date) === monthKey ? payment.amount : 0);
+}
+
 function trendMonthMetrics(key) {
   const sales = state.sales.filter((sale) => monthKeyFromDate(sale.date) === key && reportSaleMatchesScope(sale));
+  const debtCollections = reportDebtCollectionsTotalForMonth(key);
   const expenses = operatingExpenseRows().filter((expense) =>
     monthKeyFromDate(expense.date) === key
     && expenseCountsInResult(expense)
@@ -11918,7 +11969,9 @@ function trendMonthMetrics(key) {
   );
   const historical = historicalClosureForMonth(key);
   const historicalMetrics = historical ? closureScopeMetrics(historical, state.reportScope) : null;
-  const income = sum(sales, (sale) => sale.total) + Number(historicalMetrics?.income || 0);
+  const fakeIncome = sum(sales, (sale) => sale.total) + Number(historicalMetrics?.income || 0);
+  const salesRealIncome = sum(sales, saleInitialPaidAmount) + Number(historicalMetrics?.income || 0);
+  const income = salesRealIncome + debtCollections;
   const operatingExpenses = sum(expenses, reportExpenseAmount);
   const merchandiseCost = sum(sales, (sale) => saleMerchandiseCost(sale)) + Number(historicalMetrics?.merchandiseCost || 0);
   const historicalExpenses = Number(historicalMetrics?.expenseTotal || 0);
@@ -11927,6 +11980,9 @@ function trendMonthMetrics(key) {
   return {
     key,
     income,
+    fakeIncome,
+    salesRealIncome,
+    debtCollections,
     costs,
     margin,
     marginRate: income ? (margin / income) * 100 : 0,
@@ -12005,7 +12061,7 @@ function renderMarginTrend() {
   if (averages) {
     const negativeAverage = average.margin < 0;
     averages.innerHTML = `
-      <span class="trend-average-pill sales"><i></i>Prom. ventas: ${trendMoney(average.income)}</span>
+      <span class="trend-average-pill sales"><i></i>Prom. ingresos: ${trendMoney(average.income)}</span>
       <span class="trend-average-pill expenses"><i></i>Prom. gastos: ${trendMoney(average.costs)}</span>
       <span class="trend-average-pill margin ${negativeAverage ? "negative" : ""}"><i></i>Prom. margen: ${trendMoney(average.margin)}</span>
     `;
@@ -12028,7 +12084,7 @@ function renderMarginTrend() {
     const marginHeight = Math.max(5, Math.abs(entry.margin) / maxValue * 100);
     const negative = entry.margin < 0;
     return `
-      <div class="trend-month" title="${monthLabel(entry.key)} | Ventas: ${money(entry.income)} | Gastos: ${money(entry.costs)} | Margen: ${signedMoney(entry.margin)}">
+      <div class="trend-month" title="${monthLabel(entry.key)} | Ingresos reales: ${money(entry.income)} | Ventas reales: ${money(entry.salesRealIncome || entry.income)} | Cobro de deudas: ${money(entry.debtCollections || 0)} | Gastos: ${money(entry.costs)} | Margen: ${signedMoney(entry.margin)}">
         <div class="trend-bars">
           <span class="trend-bar sales" style="height:${salesHeight}%"></span>
           <span class="trend-bar expenses" style="height:${expensesHeight}%"></span>
