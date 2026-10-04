@@ -11930,7 +11930,7 @@ function renderWaterfall(income, fixedExpenses, variableExpenses, purchases, inc
   document.getElementById("marginChart").innerHTML = legend + rows.map(([label, value, start, end, cls]) => `
     <div class="waterfall-row">
       <span>${label}</span>
-      <div class="bar-track">${waterfallBar(start, end, cls, minPoint, range, cls === "income" && multipleChannels ? incomeSplit : cls === "expense" ? { kind: "expense", fixed: fixedExpenses, variable: variableExpenses } : null)}</div>
+      <div class="bar-track">${waterfallBar(start, end, cls, minPoint, range, cls === "income" ? incomeSplit : cls === "expense" ? { kind: "expense", fixed: fixedExpenses, variable: variableExpenses } : null)}</div>
       <strong>${signedMoney(value)}</strong>
     </div>
   `).join("");
