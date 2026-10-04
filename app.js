@@ -6242,7 +6242,7 @@ function requestCloudProductsPage(filters = state.productFilters || {}, page = s
   const key = cloudProductsKey(request);
   const renderIfCurrent = (result) => {
     const currentKey = cloudProductsKey(cloudProductsRequest(state.productFilters, state.productPage));
-    if (result && state.activeView === "products" && currentKey === key) renderCatalog();
+    if (result && state.activeView === "catalog" && currentKey === key) renderCatalog();
   };
   if (cloudProductsCache.has(key)) return;
   if (cloudProductsLoads.has(key)) {
@@ -6258,7 +6258,7 @@ function prefetchCloudProductsPage(filters = state.productFilters || {}, page = 
   const key = cloudProductsKey(request);
   if (cloudProductsCache.has(key) || cloudProductsLoads.has(key)) return;
   setTimeout(() => {
-    if (state.activeView !== "products") return;
+    if (state.activeView !== "catalog") return;
     loadCloudProductsPage({ ...(filters || {}) }, request.page).catch((error) => console.warn("Cloud products prefetch failed", error));
   }, 0);
 }
