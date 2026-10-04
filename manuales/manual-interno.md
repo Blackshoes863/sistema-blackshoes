@@ -5,8 +5,8 @@
 Regla definida:
 
 - Si un producto queda sin stock, el sistema guarda la fecha en `products.out_of_stock_since`.
-- Si el producto vuelve a tener stock antes de 60 dias, esa fecha se limpia y el contador vuelve a cero.
-- Si pasan 60 dias sin reposicion, la limpieza automatica archiva el producto, lo despublica del catalogo y elimina sus imagenes de Supabase Storage.
+- Si el producto vuelve a tener stock antes de 30 dias, esa fecha se limpia y el contador vuelve a cero.
+- Si pasan 30 dias sin reposicion, la limpieza automatica archiva el producto, lo despublica del catalogo y elimina sus imagenes de Supabase Storage.
 - El producto interno `MANUAL_INTERNAL` nunca entra en esta limpieza.
 
 Por seguridad, las imagenes no se borran desde SQL. Primero la Edge Function elimina los archivos del bucket `product-images` usando la API de Storage, y despues archiva el producto y sus registros asociados.
@@ -38,11 +38,11 @@ Header recomendado:
 
 ## Prueba manual
 
-Para probar sin esperar 60 dias, llamar la funcion con un valor menor:
+Para probar sin esperar 30 dias, llamar la funcion con un valor menor:
 
 `POST /functions/v1/cleanup-stale-products?days=1`
 
-Usar esto solo en pruebas. En produccion dejar `days=60`.
+Usar esto solo en pruebas. En produccion dejar `days=30`.
 
 ## Carga de informacion al ingresar
 

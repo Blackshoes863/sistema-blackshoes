@@ -1,5 +1,5 @@
 -- BlackShoes stale product cleanup.
--- Regla: si un producto queda sin stock y pasan 60 dias sin reposicion,
+-- Regla: si un producto queda sin stock y pasan 30 dias sin reposicion,
 -- se archiva automaticamente y luego se eliminan sus imagenes de Storage
 -- desde una Edge Function.
 
@@ -118,7 +118,7 @@ where p.archived_at is null
       and v.current_stock > 0
   );
 
-create or replace function public.list_stale_out_of_stock_product_assets(p_days integer default 60)
+create or replace function public.list_stale_out_of_stock_product_assets(p_days integer default 30)
 returns table(product_id uuid, storage_paths text[])
 language plpgsql
 security definer
@@ -140,7 +140,7 @@ begin
     and p.tracks_stock = true
     and coalesce(p.sku, '') <> 'MANUAL_INTERNAL'
     and p.out_of_stock_since is not null
-    and p.out_of_stock_since <= now() - make_interval(days => greatest(coalesce(p_days, 60), 1))
+    and p.out_of_stock_since <= now() - make_interval(days => greatest(coalesce(p_days, 30), 1))
     and not exists (
       select 1
       from public.product_variants v

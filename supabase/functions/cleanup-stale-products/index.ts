@@ -1,7 +1,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.4";
 
 const PRODUCT_IMAGES_BUCKET = "product-images";
-const DEFAULT_STALE_DAYS = 60;
+const DEFAULT_STALE_DAYS = 30;
 const CHUNK_SIZE = 100;
 
 function json(body: unknown, status = 200) {
