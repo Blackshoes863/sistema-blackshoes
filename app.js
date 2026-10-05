@@ -1034,6 +1034,49 @@ function productAvailableSizeVariants(product) {
   return variants.filter((variant) => !product?.tracksStock || Number(variant.stock || 0) > 0);
 }
 
+const productVariantHydrationPromises = new Map();
+
+function productNeedsCloudVariantHydration(product) {
+  if (!product?.tracksStock || !cloudEnabledWithSession() || !isUuid(product.id)) return false;
+  const variants = normalizeProductSizeVariants(product.sizeVariants);
+  return !variants.length || variants.some((variant) => !variant.id) || !productAvailableSizeVariants(product).length;
+}
+
+async function hydrateProductVariantsFromCloud(product, { force = false } = {}) {
+  if (!product || !cloudEnabledWithSession() || !isUuid(product.id)) {
+    return normalizeProductSizeVariants(product?.sizeVariants);
+  }
+  if (!force && !productNeedsCloudVariantHydration(product)) {
+    return normalizeProductSizeVariants(product.sizeVariants);
+  }
+  if (productVariantHydrationPromises.has(product.id)) {
+    return productVariantHydrationPromises.get(product.id);
+  }
+  const promise = supabaseClient
+    .from("product_variants")
+    .select("id,size,current_stock,active,archived_at")
+    .eq("product_id", product.id)
+    .eq("active", true)
+    .is("archived_at", null)
+    .then(({ data, error }) => {
+      if (error) throw new Error(`buscar talles: ${error.message}`);
+      const cloudVariants = normalizeProductSizeVariants((data || []).map((variant) => ({
+        id: variant.id,
+        size: variant.size,
+        stock: variant.current_stock,
+      })));
+      product.sizeVariants = cloudVariants;
+      product.stock = productSizeStockTotal(product);
+      persistStateLocalOnly();
+      return cloudVariants;
+    })
+    .finally(() => {
+      productVariantHydrationPromises.delete(product.id);
+    });
+  productVariantHydrationPromises.set(product.id, promise);
+  return promise;
+}
+
 function serializeProductSizeVariants(product) {
   return normalizeProductSizeVariants(product?.sizeVariants)
     .map((variant) => `${variant.size}: ${variant.stock}`)
@@ -2058,23 +2101,7 @@ async function resolveCloudSaleVariant(product, item) {
   if (!cloudEnabledWithSession() || !isUuid(product.id)) {
     throw new Error(`El producto ${product.description} requiere una variedad/talle válido.`);
   }
-  const { data, error } = await supabaseClient
-    .from("product_variants")
-    .select("id,size,current_stock,active,archived_at")
-    .eq("product_id", product.id)
-    .eq("active", true)
-    .is("archived_at", null);
-  if (error) throw new Error(`buscar talle: ${error.message}`);
-  const cloudVariants = (data || []).map((variant) => ({
-    id: variant.id,
-    size: variant.size,
-    stock: variant.current_stock,
-  }));
-  if (cloudVariants.length) {
-    product.sizeVariants = normalizeProductSizeVariants(cloudVariants);
-    product.stock = productSizeStockTotal(product);
-    persistStateLocalOnly();
-  }
+  const cloudVariants = await hydrateProductVariantsFromCloud(product, { force: true });
   const cloudVariant = normalizeProductSizeVariants(cloudVariants).find((entry) => entry.size === selectedSize && entry.id);
   if (!cloudVariant?.id) {
     throw new Error(`No encontré el talle ${selectedSize} de ${product.description} en Supabase.`);
@@ -5330,7 +5357,7 @@ function selectPosProductCode(code) {
   if (input) input.value = code;
   closePosProductCodeSuggestions();
   updateLocalAccessorySubcategorySelect({ focusIfAvailable: true });
-  updatePosSizeSelect({ focusIfAvailable: true });
+  void updatePosSizeSelect({ focusIfAvailable: true });
 }
 
 function posSizeOptions(product, selected = "") {
@@ -5343,13 +5370,28 @@ function posSizeOptions(product, selected = "") {
   ].join("");
 }
 
-function updatePosSizeSelect({ focusIfAvailable = false } = {}) {
+let posSizeHydrationRequest = 0;
+
+async function updatePosSizeSelect({ focusIfAvailable = false } = {}) {
+  const requestId = ++posSizeHydrationRequest;
   const select = document.getElementById("productSize");
   const input = document.getElementById("productSearch");
   if (!select || !input) return;
   const product = productByCodeQuery(input.value);
+  const selected = String(select.value || "").trim().toUpperCase();
+  if (productNeedsCloudVariantHydration(product)) {
+    select.innerHTML = '<option value="">Cargando talles...</option>';
+    select.disabled = true;
+    select.classList.add("is-active");
+    try {
+      await hydrateProductVariantsFromCloud(product);
+    } catch (error) {
+      console.warn("POS product variants hydration failed", error);
+    }
+    if (requestId !== posSizeHydrationRequest) return;
+  }
   const enabled = Boolean(productHasSizeVariants(product));
-  select.innerHTML = posSizeOptions(product, select.value);
+  select.innerHTML = posSizeOptions(product, selected);
   select.disabled = !enabled;
   select.classList.toggle("is-active", enabled);
   if (enabled && focusIfAvailable && document.activeElement === input) select.focus();
@@ -6863,10 +6905,22 @@ function closeManualItemModal() {
   modal.setAttribute("aria-hidden", "true");
 }
 
-function addProductToCart(cartId, productId, quantity = 1, size = "") {
+async function addProductToCart(cartId, productId, quantity = 1, size = "") {
   const product = state.products.find((item) => item.id === productId);
   const cart = state.carts.find((item) => item.id === cartId);
   if (!product || !cart) return;
+  if (productNeedsCloudVariantHydration(product)) {
+    try {
+      await hydrateProductVariantsFromCloud(product);
+    } catch (error) {
+      alert(`No pude leer los talles de ${product.description} en Supabase: ${error.message}`);
+      return;
+    }
+  }
+  if (product.tracksStock && !productHasSizeVariants(product)) {
+    alert(`El producto ${product.description} controla stock pero no tiene talles activos cargados.`);
+    return;
+  }
   const selectedSize = String(size || "").trim().toUpperCase();
   if (productHasSizeVariants(product) && !selectedSize) {
     alert("Elegí el talle para este producto.");
@@ -12345,7 +12399,7 @@ function groupSum(list, keyFn, valueFn) {
   }, {});
 }
 
-document.addEventListener("click", (event) => {
+document.addEventListener("click", async (event) => {
   const removeProductImageButton = event.target.closest("[data-remove-product-image]");
   if (removeProductImageButton) {
     productImageDraft.splice(Number(removeProductImageButton.dataset.removeProductImage), 1);
@@ -12575,7 +12629,7 @@ document.addEventListener("click", (event) => {
     const product = productByCodeQuery(document.getElementById("productSearch").value);
     const quantity = Number(document.getElementById("productQty").value || 1);
     const size = document.getElementById("productSize")?.value || "";
-    if (cart && product) addProductToCart(cart.id, product.id, quantity, size);
+    if (cart && product) await addProductToCart(cart.id, product.id, quantity, size);
   }
   if (event.target.id === "finalizeCart") {
     const cart = activeCart();

@@ -1,0 +1,616 @@
+MANUAL DE ESTADISTICAS PARA USUARIO
+Sistema BlackShoes
+
+Este documento explica como leer la pantalla de Estadisticas del sistema.
+La idea es que cada numero sirva para entender el negocio sin confundirse entre
+lo vendido, lo cobrado, lo que quedo debiendo el cliente, los costos y el margen.
+
+
+1. PARA QUE SIRVE ESTADISTICAS
+
+La pantalla de Estadisticas sirve para responder preguntas como estas:
+
+- Cuanto vendi en el periodo elegido.
+- Cuanto dinero entro realmente.
+- Cuanto quedo pendiente de cobrar.
+- Cuanto dinero entro por deudas viejas.
+- Cuanto gaste.
+- Cuanto costo la mercaderia vendida.
+- Que margen dejo el periodo.
+- Que categorias o subcategorias se movieron mas.
+- Que medios de pago se usaron mas.
+- Como viene evolucionando el negocio mes a mes.
+
+La parte importante es separar dos miradas:
+
+- Movimiento comercial: lo que se vendio.
+- Caja real: lo que efectivamente se cobro.
+
+Por eso el sistema muestra ingresos ficticios e ingresos reales.
+
+
+2. FILTROS DE PERIODO
+
+Las estadisticas se calculan segun el periodo elegido.
+
+Los periodos principales son:
+
+- Hoy: muestra los datos del dia actual.
+- Mes actual: muestra los datos del mes en curso.
+- Ultimo ano: muestra los ultimos 12 meses.
+- Historico: muestra todos los meses conocidos por el sistema.
+- Personalizado: permite elegir desde que fecha hasta que fecha analizar.
+
+Cuando se cambia el periodo, el sistema vuelve a consultar la informacion
+necesaria para ese rango. No necesita descargar toda la base completa para
+mostrar un solo periodo.
+
+
+3. INGRESOS FICTICIOS
+
+Ingresos ficticios significa:
+
+El total vendido en el periodo, sin importar si el cliente pago todo o quedo
+debiendo una parte.
+
+Ejemplo:
+
+- Se vende una campera por $ 100.000.
+- El cliente paga $ 40.000.
+- Queda debiendo $ 60.000.
+
+En Ingresos ficticios, esa venta cuenta como $ 100.000.
+
+Este dato sirve para medir cuanto vendio el negocio comercialmente.
+Es util para saber si hubo movimiento, demanda y volumen de ventas.
+
+Pero no debe usarse como caja real, porque puede incluir plata que todavia no
+entro.
+
+
+4. INGRESOS REALES
+
+Ingresos reales significa:
+
+El dinero que entro efectivamente en el periodo.
+
+Incluye:
+
+- Lo cobrado al momento de hacer una venta.
+- Lo cobrado despues por deudas pendientes.
+
+Ejemplo:
+
+- Se vende una campera por $ 100.000.
+- El cliente paga $ 40.000.
+- Queda debiendo $ 60.000.
+
+En el dia de la venta:
+
+- Ingresos ficticios: $ 100.000.
+- Ingresos reales: $ 40.000.
+
+Si una semana despues el cliente paga los $ 60.000 restantes:
+
+- Esa semana aparecen $ 60.000 como cobro de deuda.
+- Tambien suma a ingresos reales de esa semana.
+- No se cuenta como una venta nueva.
+
+Ingresos reales es el numero mas importante para mirar caja.
+Sirve para saber cuanta plata entro realmente.
+
+
+5. COBRO DE DEUDAS
+
+Cobro de deudas es la plata que entra por ventas que ya existian y habian
+quedado total o parcialmente pendientes.
+
+No representa una venta nueva.
+Representa una cobranza.
+
+Ejemplo:
+
+- En septiembre se hizo una venta de $ 80.000 y quedaron debiendo $ 30.000.
+- En octubre el cliente paga esos $ 30.000.
+
+En octubre:
+
+- No aumenta Ingresos ficticios por esa venta, porque la venta fue de septiembre.
+- Si aumenta Ingresos reales, porque la plata entro en octubre.
+- Se muestra dentro de Cobro de deudas.
+
+En el grafico de margen, el cobro de deudas aparece separado con color celeste.
+Esto ayuda a distinguir si la plata entro por ventas del periodo o por deudas
+anteriores.
+
+
+6. DIFERENCIA ENTRE INGRESOS FICTICIOS E INGRESOS REALES
+
+Si Ingresos ficticios es mayor que Ingresos reales, significa que hubo ventas
+que no se cobraron completas.
+
+Ejemplo:
+
+- Ingresos ficticios: $ 1.000.000.
+- Ingresos reales: $ 700.000.
+
+Interpretacion:
+
+- El negocio vendio por $ 1.000.000.
+- Pero solo entraron $ 700.000.
+- Hay $ 300.000 que quedaron pendientes de cobrar, salvo diferencias por pagos
+  de deudas anteriores.
+
+Esta diferencia es muy importante.
+
+Si el negocio vende mucho pero cobra poco, puede parecer que esta funcionando
+bien, pero la caja puede quedar corta.
+
+
+7. GASTOS
+
+Gastos representa los gastos cargados en el sistema para el periodo elegido.
+
+Puede incluir, por ejemplo:
+
+- Alquiler.
+- Sueldos.
+- Servicios.
+- Envio.
+- Publicidad.
+- Gastos administrativos.
+- Compras o egresos que se carguen desde Gastos y Mercaderia.
+
+Los gastos bajan el margen.
+
+Si un gasto esta cargado en el mes actual, afecta las estadisticas de ese mes.
+Si esta cargado en otro periodo, afecta ese otro periodo.
+
+
+8. COSTO DE MERCADERIA
+
+Costo de Mercaderia representa el costo de los productos vendidos.
+
+El sistema toma el costo guardado en la venta.
+Esto es importante porque el costo correcto debe quedar registrado al momento de
+vender, aunque despues se cambie el precio o costo del producto.
+
+Cuando un producto no tiene costo cargado, el sistema calcula un costo automatico
+segun el porcentaje configurado sobre el precio de venta.
+
+Ejemplo:
+
+- Precio de venta: $ 50.000.
+- Porcentaje configurado para productos sin costo: 50%.
+- Costo automatico estimado: $ 25.000.
+
+Ese costo estimado sirve para que las estadisticas no queden con margen inflado.
+
+Importante:
+
+El costo estimado se calcula desde el precio/subtotal de venta. Si despues se
+aplica un descuento o queda deuda, el costo no deberia bajar por eso. El costo
+representa lo que costo vender ese producto, no lo que el cliente pago en ese
+momento.
+
+
+9. MARGEN REAL
+
+Margen real es el resultado de caja real del periodo.
+
+Formula general:
+
+Ingresos reales - Gastos - Costo de Mercaderia = Margen real
+
+Ejemplo:
+
+- Ingresos reales: $ 700.000.
+- Gastos: $ 200.000.
+- Costo de mercaderia: $ 300.000.
+
+Margen real:
+
+$ 700.000 - $ 200.000 - $ 300.000 = $ 200.000.
+
+Este margen sirve para mirar como quedo el periodo con la plata que realmente
+entro.
+
+Si el margen real da negativo, puede ser por:
+
+- Se vendio poco.
+- Se cobro poco.
+- Hubo muchas ventas con deuda.
+- Los gastos fueron altos.
+- Los costos fueron altos.
+- Hay productos con costos mal cargados.
+
+
+10. MARGEN FICTICIO
+
+Margen ficticio es una mirada comercial.
+
+Formula general:
+
+Ingresos ficticios - Gastos - Costo de Mercaderia = Margen ficticio
+
+Sirve para responder:
+
+"Si todo lo vendido se hubiera cobrado, cuanto margen hubiera dejado el periodo?"
+
+Ejemplo:
+
+- Ingresos ficticios: $ 1.000.000.
+- Ingresos reales: $ 700.000.
+- Gastos: $ 200.000.
+- Costo de mercaderia: $ 300.000.
+
+Margen real:
+
+$ 700.000 - $ 200.000 - $ 300.000 = $ 200.000.
+
+Margen ficticio:
+
+$ 1.000.000 - $ 200.000 - $ 300.000 = $ 500.000.
+
+Interpretacion:
+
+El negocio genero ventas suficientes para dejar $ 500.000, pero en caja real
+quedaron $ 200.000 porque falta cobrar una parte.
+
+
+11. TICKET PROMEDIO
+
+Ticket promedio indica cuanto vale, en promedio, cada venta.
+
+Formula:
+
+Ingresos ficticios / cantidad de ventas = ticket promedio
+
+Ejemplo:
+
+- Ingresos ficticios: $ 900.000.
+- Cantidad de ventas: 30.
+
+Ticket promedio:
+
+$ 900.000 / 30 = $ 30.000.
+
+Este dato sirve para saber si las ventas son chicas, medianas o grandes.
+
+Si sube el ticket promedio, puede significar que se estan vendiendo productos de
+mayor valor o mas unidades por venta.
+
+
+12. GRAFICO DE MARGEN
+
+El grafico de margen muestra como se arma el resultado.
+
+La lectura es:
+
+1. Parte desde los ingresos reales.
+2. Se separa entre:
+   - Ingresos por ventas reales.
+   - Cobro de deudas.
+3. Descuenta gastos.
+4. Descuenta costo de mercaderia.
+5. Termina en margen.
+
+El color celeste representa cobro de deudas.
+
+Si el celeste aparece alto, significa que en ese periodo entro mucha plata por
+deudas anteriores.
+
+Si el ingreso por ventas reales aparece bajo pero el cobro de deudas alto,
+puede ser que el periodo haya tenido poca venta nueva, pero buena recuperacion
+de deuda.
+
+
+13. GRAFICO DE EVOLUCION
+
+El grafico de evolucion sirve para comparar meses.
+
+Muestra como se comportan:
+
+- Ingresos reales.
+- Gastos.
+- Margen.
+
+Tambien permite entender si el negocio mejora, empeora o se mantiene.
+
+Cuando se usa "Ultimo ano" o "Historico", este grafico es muy util para ver
+tendencias.
+
+Ejemplos de lectura:
+
+- Si ingresos suben y margen sube: el negocio esta mejorando.
+- Si ingresos suben pero margen baja: puede haber costos o gastos altos.
+- Si ingresos bajan pero margen se mantiene: puede haber mejor control de costo.
+- Si margen queda negativo varios meses: conviene revisar precios, gastos y
+  costos.
+
+
+14. ORDEN DEL GRAFICO DE EVOLUCION
+
+El grafico puede ordenarse de diferentes formas.
+
+Orden cronologico:
+
+Muestra los meses en orden de tiempo. Es el mejor modo para ver evolucion real.
+
+Mayor margen:
+
+Muestra primero los meses que dejaron mas margen.
+Sirve para detectar los mejores periodos.
+
+Menor margen:
+
+Muestra primero los meses con peor margen.
+Sirve para detectar problemas.
+
+
+15. MEDIOS DE PAGO
+
+La seccion de medios de pago muestra como entro la plata segun el metodo usado.
+
+Ejemplos:
+
+- Efectivo.
+- Transferencia.
+- Mercado Pago.
+- Tarjeta.
+- Otro.
+
+Los nombres se muestran normalizados, empezando en mayuscula, para que no
+aparezcan mezclados por diferencias de escritura.
+
+Ejemplo:
+
+- "transferencia"
+- "Transferencia"
+- "TRANSFERENCIA"
+
+Todas deberian verse agrupadas como "Transferencia".
+
+Esta seccion sirve para saber por donde entra mas dinero.
+
+
+16. CATEGORIAS Y SUBCATEGORIAS
+
+Las secciones de categorias y subcategorias muestran que tipo de productos se
+vendieron mas.
+
+Ejemplos:
+
+- Zapatillas.
+- Remeras.
+- Hoodies.
+- Pantalones.
+- Accesorios.
+
+Importante:
+
+Las ventas manuales no deberian sumarse como Accesorios.
+Una venta manual es una venta cargada sin producto del catalogo. Por eso no debe
+deformar las estadisticas de categorias.
+
+Si Accesorios sube mucho, deberia ser porque realmente se vendieron productos de
+esa categoria.
+
+
+17. DESTINOS ONLINE
+
+Cuando hay ventas online con datos de destino, el sistema puede mostrar destinos
+o provincias.
+
+Esta informacion sirve para saber de donde vienen las ventas online.
+
+Si no hay ventas online o no hay datos de destino, esta seccion puede aparecer
+vacia o no aportar informacion.
+
+
+18. DETALLES Y BOTON AMPLIAR
+
+Algunas secciones muestran pocos datos al principio para que la pantalla no quede
+demasiado larga.
+
+Cuando aparece "Ampliar", se puede ver mas detalle.
+
+Esto aplica especialmente a listados o rankings donde puede haber muchos datos.
+
+
+19. COMO INTERPRETAR CASOS COMUNES
+
+Caso 1:
+
+Ingresos ficticios altos e ingresos reales bajos.
+
+Interpretacion:
+
+Se vendio bastante, pero falta cobrar.
+Conviene revisar deudas pendientes.
+
+
+Caso 2:
+
+Ingresos reales altos y cobro de deudas alto.
+
+Interpretacion:
+
+Entro buena plata, pero una parte importante vino de deudas anteriores.
+No todo corresponde a ventas nuevas del periodo.
+
+
+Caso 3:
+
+Margen ficticio positivo y margen real bajo o negativo.
+
+Interpretacion:
+
+El negocio vendio con margen, pero no cobro lo suficiente en el periodo.
+Puede haber mucho fiado o pagos parciales.
+
+
+Caso 4:
+
+Margen ficticio negativo.
+
+Interpretacion:
+
+Aunque se cobrara todo, el periodo igual quedaria mal.
+Hay que revisar precios, costos o gastos.
+
+
+Caso 5:
+
+Costos muy bajos o margen demasiado alto.
+
+Interpretacion:
+
+Puede haber productos sin costo cargado o costos mal cargados.
+Conviene revisar los costos de productos importantes.
+
+
+Caso 6:
+
+Una categoria aparece con muchas ventas inesperadas.
+
+Interpretacion:
+
+Puede ser una categoria que realmente vendio mucho, o puede haber productos mal
+categorizados.
+Tambien conviene revisar que las ventas manuales no esten afectando categorias.
+
+
+20. FUENTE DE DATOS
+
+La fuente principal de verdad es Supabase.
+
+Para estadisticas, el sistema consulta una funcion de Supabase que resume el
+periodo elegido.
+
+Flujo general:
+
+Sistema -> Supabase -> resumen estadistico -> pantalla de Estadisticas
+
+Esto evita tener que descargar toda la base para calcular todo en el navegador.
+
+El navegador muestra el resultado, pero la base es la que debe entregar los
+numeros confiables.
+
+
+21. CUANDO PUEDEN TARDAR O NO ACTUALIZARSE LOS NUMEROS
+
+Puede pasar que los numeros tarden o no se actualicen en el momento si:
+
+- Hay operaciones pendientes de sincronizar.
+- Se cargo una venta offline y todavia no subio a Supabase.
+- Se acaba de aplicar una migracion o cambio en la base.
+- El navegador tiene informacion vieja en memoria.
+- La conexion esta lenta.
+
+En esos casos conviene:
+
+1. Tocar Sincronizar.
+2. Esperar unos segundos.
+3. Recargar la pantalla si hace falta.
+4. Volver a entrar a Estadisticas.
+
+
+22. QUE NUMERO USAR PARA CADA DECISION
+
+Para saber cuanto se vendio:
+
+Usar Ingresos ficticios.
+
+Para saber cuanta plata entro:
+
+Usar Ingresos reales.
+
+Para saber cuanto se recupero de deudas:
+
+Usar Cobro de deudas.
+
+Para mirar caja del periodo:
+
+Usar Ingresos reales y Margen real.
+
+Para mirar rendimiento comercial:
+
+Usar Ingresos ficticios y Margen ficticio.
+
+Para revisar si hay mucha deuda:
+
+Comparar Ingresos ficticios contra Ingresos reales.
+
+Para revisar si los precios estan bien:
+
+Mirar margen, costo de mercaderia y productos sin costo cargado.
+
+
+23. RESUMEN CORTO
+
+Ingresos ficticios:
+
+Todo lo vendido.
+
+Ingresos reales:
+
+La plata que entro.
+
+Cobro de deudas:
+
+Plata cobrada de ventas anteriores o pendientes.
+
+Gastos:
+
+Egresos cargados en el periodo.
+
+Costo de mercaderia:
+
+Costo de los productos vendidos.
+
+Margen real:
+
+Lo que queda con plata realmente cobrada.
+
+Margen ficticio:
+
+Lo que quedaria si todo lo vendido estuviera cobrado.
+
+Ticket promedio:
+
+Promedio de valor por venta.
+
+Categorias:
+
+Que se vendio mas.
+
+Medios de pago:
+
+Por donde entro la plata.
+
+
+24. RECOMENDACION DE USO
+
+Para uso diario:
+
+- Mirar Mes actual.
+- Revisar Ingresos reales.
+- Revisar Cobro de deudas.
+- Revisar Margen real.
+
+Para entender ventas:
+
+- Mirar Ingresos ficticios.
+- Mirar Ticket promedio.
+- Mirar Categorias y Subcategorias.
+
+Para decisiones de negocio:
+
+- Comparar Ingresos ficticios contra Ingresos reales.
+- Revisar si hay mucha diferencia por deudas.
+- Revisar margen real y margen ficticio.
+- Revisar costos de productos importantes.
+
+La mejor lectura no sale de un solo numero.
+Sale de mirar juntos: ventas, cobros, deuda, gastos, costos y margen.
