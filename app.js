@@ -1147,8 +1147,30 @@ function readFileAsDataUrl(file) {
   });
 }
 
-function optimizeProductImageDataUrl(dataUrl, { maxSize = 1200, quality = 0.78 } = {}) {
+const PRODUCT_IMAGE_MAX_DIMENSION = 1800;
+const PRODUCT_IMAGE_WEBP_QUALITY = 0.86;
+
+function dataUrlByteLength(dataUrl = "") {
+  const base64 = String(dataUrl || "").split(",")[1] || "";
+  if (!base64) return 0;
+  const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
+  return Math.max(0, Math.floor((base64.length * 3) / 4) - padding);
+}
+
+function formatFileSize(bytes = 0) {
+  const value = Number(bytes || 0);
+  if (value >= 1024 * 1024) return `${(value / (1024 * 1024)).toLocaleString("es-AR", { maximumFractionDigits: 1 })} MB`;
+  if (value >= 1024) return `${Math.round(value / 1024).toLocaleString("es-AR")} KB`;
+  return `${Math.round(value).toLocaleString("es-AR")} B`;
+}
+
+function optimizeProductImageDataUrl(dataUrl, { maxSize = PRODUCT_IMAGE_MAX_DIMENSION, quality = PRODUCT_IMAGE_WEBP_QUALITY } = {}) {
   return new Promise((resolve) => {
+    const type = String(dataUrl || "").match(/^data:image\/([^;]+);/i)?.[1]?.toLowerCase() || "";
+    if (["gif", "svg+xml"].includes(type)) {
+      resolve(dataUrl);
+      return;
+    }
     const image = new Image();
     image.onload = () => {
       const ratio = Math.min(1, maxSize / Math.max(image.naturalWidth || 1, image.naturalHeight || 1));
@@ -1176,9 +1198,17 @@ function optimizeProductImageDataUrl(dataUrl, { maxSize = 1200, quality = 0.78 }
 }
 
 async function productImageFileToDataUrl(file) {
-  if (!file || !String(file.type || "").startsWith("image/")) return "";
+  if (!file || !String(file.type || "").startsWith("image/")) return null;
   const dataUrl = await readFileAsDataUrl(file);
-  return optimizeProductImageDataUrl(dataUrl);
+  const optimizedDataUrl = await optimizeProductImageDataUrl(dataUrl);
+  const originalBytes = Number(file.size || dataUrlByteLength(dataUrl));
+  const finalBytes = dataUrlByteLength(optimizedDataUrl);
+  return {
+    dataUrl: optimizedDataUrl,
+    originalBytes,
+    finalBytes: finalBytes || originalBytes,
+    optimized: Boolean(finalBytes && finalBytes < originalBytes),
+  };
 }
 
 function renderProductImagePreview() {
@@ -1206,12 +1236,22 @@ async function addProductImageFiles(files = []) {
     return;
   }
   const selected = list.slice(0, availableSlots);
+  let originalBytes = 0;
+  let finalBytes = 0;
   for (const file of selected) {
-    const dataUrl = await productImageFileToDataUrl(file);
-    if (dataUrl) productImageDraft = normalizeProductImageUrls([...productImageDraft, dataUrl]);
+    const result = await productImageFileToDataUrl(file);
+    if (!result?.dataUrl) continue;
+    originalBytes += Number(result.originalBytes || 0);
+    finalBytes += Number(result.finalBytes || result.originalBytes || 0);
+    productImageDraft = normalizeProductImageUrls([...productImageDraft, result.dataUrl]);
   }
   renderProductImagePreview();
-  showActionToast(`${selected.length} ${selected.length === 1 ? "foto cargada" : "fotos cargadas"}.`);
+  const savedBytes = originalBytes - finalBytes;
+  const savedPercent = originalBytes > 0 ? Math.round((savedBytes / originalBytes) * 100) : 0;
+  const optimizationLabel = savedBytes > 0
+    ? ` Optimizadas: ${formatFileSize(originalBytes)} -> ${formatFileSize(finalBytes)} (-${savedPercent}%).`
+    : "";
+  showActionToast(`${selected.length} ${selected.length === 1 ? "foto cargada" : "fotos cargadas"}.${optimizationLabel}`);
 }
 
 function slugifyCatalogValue(value) {
@@ -1970,6 +2010,14 @@ function normalizeCloudDashboardSummary(data = {}, monthKey = state.selectedMont
     todayPaymentMethods: (Array.isArray(data.todayPaymentMethods) ? data.todayPaymentMethods : []).map((row) => ({
       method: row.method || "sin-medio",
       count: Number(row.count || 0),
+      total: Number(row.total || 0),
+    })),
+    hasMonthDailySales: Array.isArray(data.monthDailySales),
+    monthDailySales: (Array.isArray(data.monthDailySales) ? data.monthDailySales : []).map((row) => ({
+      date: row.date || "",
+      local: Number(row.local || 0),
+      insumos: Number(row.insumos || 0),
+      accesorios: Number(row.accesorios || 0),
       total: Number(row.total || 0),
     })),
     loadedAt: Date.now(),
@@ -8834,7 +8882,7 @@ function renderDashboard() {
   document.getElementById("monthResult").textContent = money(monthlyRevenue - monthlyExpenses - monthlyMerchandiseCost);
   if (todayPaymentRows) renderTodayPaymentSummaryRows(todayPaymentRows);
   else renderTodayPaymentSummary(todaySales.filter((sale) => sale.channel === "local"));
-  renderMonthlyChart();
+  renderMonthlyChart(cloudSummary);
 }
 
 function renderTodayPaymentSummaryRows(rows = []) {
@@ -8871,16 +8919,28 @@ function renderTodayPaymentSummary(todaySales) {
   renderTodayPaymentSummaryRows(Object.values(summary));
 }
 
-function renderMonthlyChart() {
+function renderMonthlyChart(summary = cachedCloudDashboardSummary(state.selectedMonth)) {
   const chart = document.getElementById("monthlyChart");
   const monthDate = parseMonthKey(state.selectedMonth);
   const year = monthDate.getFullYear();
   const month = monthDate.getMonth();
   const monthNumber = month + 1;
   const days = new Date(year, month + 1, 0).getDate();
+  const useCloudDailySales = Boolean(summary?.hasMonthDailySales);
+  const cloudRowsByDate = new Map((summary?.monthDailySales || []).map((row) => [row.date, row]));
   const daily = Array.from({ length: days }, (_, index) => {
     const day = index + 1;
     const date = `${year}-${String(monthNumber).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    const cloudRow = cloudRowsByDate.get(date);
+    if (useCloudDailySales) {
+      return {
+        day,
+        local: Number(cloudRow?.local || 0),
+        insumos: Number(cloudRow?.insumos || 0),
+        accesorios: Number(cloudRow?.accesorios || 0),
+        total: Number(cloudRow?.total || 0),
+      };
+    }
     const sales = state.sales.filter((sale) => sale.date === date && saleModuleEnabled(sale));
     const local = sum(sales.filter((sale) => saleBucket(sale) === "local"), (sale) => sale.total);
     const insumos = sum(sales.filter((sale) => saleBucket(sale) === "insumos"), (sale) => sale.total);
