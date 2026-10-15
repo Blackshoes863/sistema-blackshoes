@@ -11924,7 +11924,7 @@ function renderCloudReportSummary(summary) {
   renderWaterfall(summary.income, summary.fixedExpenses, summary.variableExpenses, summary.merchandiseCost, incomeSplit);
   renderCloudMarginTrend(summary);
   renderBarList("categoryChart", summary.categories, "art.", REPORT_PREVIEW_LIMIT);
-  renderBarList("subcategoryChart", summary.subcategories, "art.", REPORT_PREVIEW_LIMIT, { metaLabels: summary.subcategoryCategories });
+  renderBarList("subcategoryChart", summary.subcategories, "art.", REPORT_PREVIEW_LIMIT);
   renderAmountCountList("provinceChart", summary.provinces, REPORT_PREVIEW_LIMIT, "count");
   renderAmountCountList("paymentChart", summary.payments, REPORT_PREVIEW_LIMIT);
   renderAmountCountList("reportExpenseDetails", summary.expenseDetails, REPORT_PREVIEW_LIMIT, "amount", {
@@ -12415,7 +12415,7 @@ function renderCategoryReports(sales) {
   const categoryAverages = comparisonMonths ? historicalAverageCategoryMap(state.reportScope) : {};
   const provinceAverages = comparisonMonths ? historicalAverageProvinceMap() : {};
   renderBarList("categoryChart", data.categories, "art.", REPORT_PREVIEW_LIMIT, { ...averageOptions, averages: categoryAverages });
-  renderBarList("subcategoryChart", data.subcategories, "art.", REPORT_PREVIEW_LIMIT, { metaLabels: data.subcategoryCategories });
+  renderBarList("subcategoryChart", data.subcategories, "art.", REPORT_PREVIEW_LIMIT);
   renderAmountCountList("provinceChart", data.provinces, REPORT_PREVIEW_LIMIT, "count", { ...averageOptions, averages: provinceAverages });
   renderAmountCountList("paymentChart", data.payments, REPORT_PREVIEW_LIMIT);
 }
@@ -12531,7 +12531,6 @@ function openReportExpandModal(kind) {
     averageOptions.displayLabels = data.productLabels || {};
     averageOptions.metaLabels = data.productCategories || {};
   }
-  if (kind === "subcategories") averageOptions.metaLabels = cloudSummary?.subcategoryCategories || data.subcategoryCategories || {};
   if (meta) {
     const limitText = config.meta || (shownRows < totalRows ? `${shownRows} de ${totalRows}` : `${totalRows} registros`);
     meta.textContent = limitText;
