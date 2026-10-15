@@ -355,7 +355,6 @@ button.size-chip {
 }
 
 .catalog-page-number[aria-current="page"] {
-  color: #254c2c;
   background: #d9ead3;
   border-color: #4d8b57;
 }
@@ -375,6 +374,11 @@ button.size-chip {
 }
 
 .catalog-pagination button {
+  -webkit-appearance: none;
+  appearance: none;
+  color: var(--text);
+  -webkit-text-fill-color: currentColor;
+  font-family: inherit;
   cursor: pointer;
 }
 
