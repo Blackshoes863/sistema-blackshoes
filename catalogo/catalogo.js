@@ -255,12 +255,6 @@ function renderCatalogPagination() {
       <button class="secondary-action" data-catalog-page-delta="1" ${catalogPageLoading || catalogCurrentPage >= totalPages ? "disabled" : ""} type="button">Siguiente &rarr;</button>
     </div>
     <span class="catalog-page-summary">P\u00e1gina ${catalogCurrentPage} de ${totalPages}</span>
-    ${totalPages > 7 ? `
-      <form class="catalog-page-jump" id="catalogPageJump">
-        <label for="catalogPageInput">Ir a p\u00e1gina</label>
-        <input id="catalogPageInput" name="page" type="number" min="1" max="${totalPages}" step="1" inputmode="numeric" required ${catalogPageLoading ? "disabled" : ""}>
-        <button class="secondary-action" type="submit" aria-label="Ir a la p\u00e1gina indicada" title="Ir a p\u00e1gina" ${catalogPageLoading ? "disabled" : ""}>&rarr;</button>
-      </form>` : ""}
   `;
 }
 
@@ -698,12 +692,6 @@ document.addEventListener("click", (event) => {
   }
   const sizeButton = event.target.closest("[data-select-size]");
   if (sizeButton) renderProductDetail(sizeButton.dataset.selectSize);
-});
-document.addEventListener("submit", (event) => {
-  if (event.target.id !== "catalogPageJump") return;
-  event.preventDefault();
-  const input = event.target.querySelector("input[name=page]");
-  if (input?.reportValidity()) goToCatalogPage(input.value);
 });
 document.addEventListener("change", (event) => {
   if (event.target.id === "productColorSelect") {

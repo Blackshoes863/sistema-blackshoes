@@ -336,8 +336,7 @@ button.size-chip {
 }
 
 .catalog-page-controls,
-.catalog-page-numbers,
-.catalog-page-jump {
+.catalog-page-numbers {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -366,21 +365,7 @@ button.size-chip {
   text-align: center;
 }
 
-.catalog-page-jump {
-  margin: 0;
-  font-size: 14px;
-}
-
-.catalog-page-jump input {
-  width: 72px;
-  min-height: 42px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 6px 8px;
-  font: inherit;
-}
-
-.catalog-pagination :is(button, input):focus-visible {
+.catalog-pagination button:focus-visible {
   outline: 2px solid #a63e69;
   outline-offset: 3px;
 }
