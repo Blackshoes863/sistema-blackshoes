@@ -90,3 +90,17 @@ Aplicar `supabase/migrations/202610150002_catalog_stock_visibility.sql` para que
 Con `hide`, un producto con control de stock se muestra solo si tiene algun talle activo, no archivado y con unidades. Los productos sin control de stock siguen disponibles. Con `show`, los agotados publicados siguen visibles con su estado.
 
 Pruebas de visibilidad: `node --test tests/catalog-stock-visibility.test.cjs`.
+
+## Costo de items manuales en Venta Local
+
+Aplicar `supabase/migrations/202610150003_manual_sale_cost.sql`.
+
+- Los items manuales nuevos traen marcada la casilla `Calcular costo`. Los borradores anteriores conservan su decision previa.
+- El porcentaje es el configurado en `Costo sin precio de costo`, el mismo de productos sin costo cargado. La etiqueta muestra el costo total de esa linea, incluyendo la cantidad.
+- Al destildar se guarda costo cero. No se aplica el porcentaje de respaldo sobre ese cero.
+- La RPC calcula el costo en PostgreSQL sobre el precio unitario del item, antes de descuentos, total final manual y pagos parciales.
+- Se guardan `sale_items.unit_cost` y `sale_items.calculate_manual_cost`. Cambiar el porcentaje despues no altera el costo guardado de esa venta.
+- Los costos manuales guardados se incluyen en Gastos/Mercaderia, Resumen, Estadisticas y cierres mensuales. La venta manual sigue fuera de las categorias de productos.
+- La migracion no recalcula ni modifica los importes de ventas anteriores.
+
+Pruebas: `node --test tests/manual-sale-cost.test.cjs`.

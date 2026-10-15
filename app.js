@@ -1574,6 +1574,7 @@ function normalizeCloudSale(row = {}) {
       quantity: Number(item.quantity || 0),
       unitPrice: Number(item.unit_price || 0),
       unitCost: Number(item.unit_cost || 0),
+      calculateManualCost: Boolean(item.calculate_manual_cost),
       tracksStock: Boolean(item.variant_id),
       manual: isManualInternal || !item.product_id,
     };
@@ -2237,7 +2238,8 @@ async function cloudSaleItemsFromCartAsync(cart) {
         variant_id: null,
         quantity: Number(item.quantity || 1),
         unit_price: Number(item.unitPrice || 0),
-        unit_cost: Number(item.unitCost || 0),
+        unit_cost: itemUnitCost(item),
+        calculate_manual_cost: item.calculateManualCost === true,
       };
     }
     const product = state.products.find((entry) => entry.id === item.productId);
@@ -4160,6 +4162,12 @@ function onlineDiscountAmountFromRecord(record = {}) {
 }
 
 function itemUnitCost(item) {
+  if (item.manual) {
+    if (item.unitCost != null && Number.isFinite(Number(item.unitCost))) return Math.max(0, Number(item.unitCost));
+    return item.calculateManualCost === true
+      ? Math.round(Number(item.unitPrice || 0) * businessSettings().missingCostFallbackRate * 100) / 100
+      : 0;
+  }
   const ownCost = Number(item.unitCost || 0);
   if (ownCost > 0) return ownCost;
   const product = state.products.find((entry) => entry.id === item.productId);
@@ -4173,6 +4181,7 @@ function estimatedMissingUnitCostFromPrice(unitPrice) {
 }
 
 function saleItemUnitCostForPayload(item, product) {
+  if (item.manual) return itemUnitCost(item);
   const ownCost = Number(item.unitCost || 0);
   if (ownCost > 0) return ownCost;
   const productCost = Number(product?.cost || 0);
@@ -4186,7 +4195,6 @@ function saleMerchandiseCost(sale) {
     return Number(sale.onlineCost ?? onlineEstimatedCost(hasGross ? onlineGrossAmountFromRecord(sale) : sale.total, sale.onlineStore || sale.store || "insumos", hasGross ? "base" : sale.onlinePromo || "base"));
   }
   return sum(sale.items || [], (item) => {
-    if (item.manual) return 0;
     return itemUnitCost(item) * Number(item.quantity || 1);
   });
 }
@@ -7078,6 +7086,7 @@ function addManualItem(cartId, description, price, category = "Manual") {
   if (!cart || !description || !price) return;
   cart.items.push({
     manual: true,
+    calculateManualCost: true,
     description,
     category,
     quantity: 1,
@@ -7086,6 +7095,16 @@ function addManualItem(cartId, description, price, category = "Manual") {
   });
   saveUiState();
   render();
+}
+
+function setCartManualItemCost(cartId, index, enabled) {
+  const cart = state.carts.find((entry) => entry.id === cartId);
+  const item = cart?.items[index];
+  if (!item?.manual) return;
+  item.calculateManualCost = Boolean(enabled);
+  delete item.unitCost;
+  saveUiState();
+  renderCartWorkspace(cart);
 }
 
 function updateCartItem(cartId, index, delta) {
@@ -7145,7 +7164,7 @@ async function finalizeCart(cartId) {
     skipPaymentAdjustment: false,
     manualTotalEnabled: Boolean(cart.manualTotalEnabled),
     manualTotal: cart.manualTotalEnabled ? total : "",
-    items: cart.items.map((item) => ({ ...item })),
+    items: cart.items.map((item) => ({ ...item, ...(item.manual ? { unitCost: itemUnitCost(item) } : {}) })),
     reference: cart.reference,
     customerId: customer?.id || "",
     customerName: customer?.name || cart.reference || "",
@@ -9144,7 +9163,11 @@ function renderCartWorkspace(cart) {
   const manualTotalValue = cart.manualTotal !== "" && cart.manualTotal != null ? Number(cart.manualTotal || 0) : subtotal;
   const rows = cart.items.map((item, index) => `
     <tr>
-      <td data-label="Item">${item.description}<br><small>${htmlAttr(cartItemMetaLabel(item))}</small></td>
+      <td data-label="Item">${htmlAttr(item.description)}<br><small>${htmlAttr(cartItemMetaLabel(item))}</small>${item.manual ? `
+        <label class="manual-item-cost-check">
+          <input type="checkbox" data-manual-item-cost="${index}" ${item.calculateManualCost === true ? "checked" : ""}>
+          <span>Calcular costo (${money(itemUnitCost(item) * Number(item.quantity || 1))})</span>
+        </label>` : ""}</td>
       <td data-label="Precio">${money(item.unitPrice)}</td>
       <td data-label="Cantidad">
         <span class="qty-control">
@@ -13369,6 +13392,10 @@ document.addEventListener("change", async (event) => {
   }
   const cart = activeCart();
   if (!cart) return;
+  if (event.target.dataset.manualItemCost != null) {
+    setCartManualItemCost(cart.id, Number(event.target.dataset.manualItemCost), event.target.checked);
+    return;
+  }
   if (event.target.id === "cartPayment") {
     cart.paymentMethod = event.target.value;
     saveUiState();

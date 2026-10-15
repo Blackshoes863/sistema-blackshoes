@@ -1530,6 +1530,34 @@ h3 {
   display: none;
 }
 
+.manual-item-cost-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  margin: 4px 0 0 8px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-align: left;
+  vertical-align: middle;
+  cursor: pointer;
+}
+
+.manual-item-cost-check input {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  min-height: 0;
+  padding: 0;
+  margin: 0;
+  accent-color: var(--green);
+}
+
+.manual-item-cost-check span {
+  overflow-wrap: anywhere;
+}
+
 .customer-picker-search {
   min-height: 42px;
   border-color: var(--line);
