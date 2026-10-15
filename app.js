@@ -11040,7 +11040,7 @@ function renderMonthlyClosures() {
   state.monthlyClosuresPage = current;
   table.innerHTML = pageRows.length ? pageRows.map((closure) => `
     <tr>
-      <td><strong>${htmlAttr(closure.label || monthLabel(closure.monthKey))}</strong><br><small>${formatDateShort(String(closure.closedAt || "").slice(0, 10))}</small>${CLOUD_DATA_ENABLED && closure.syncStatus !== "synced" && closure.source !== "historical-import" ? '<br><small class="text-danger">Sin guardar en Supabase</small>' : ""}</td>
+      <td><strong>${htmlAttr(closure.label || monthLabel(closure.monthKey))}</strong>${CLOUD_DATA_ENABLED && closure.syncStatus !== "synced" && closure.source !== "historical-import" ? '<br><small class="text-danger">Sin guardar en Supabase</small>' : ""}</td>
       <td>${money(closure.income)}</td>
       <td>${money(closure.expenseTotal)}</td>
       <td>${money(closure.merchandiseCost)}</td>
