@@ -82,3 +82,11 @@ Hoy queda en 60 dias para ventas y gastos iniciales. Desde Configuracion > Carga
 - Cierres antiguos que sigan en el navegador se conservan y muestran `Sin guardar en Supabase`. Volver a cerrar ese mes recalcula el mes completo y lo guarda en la base. Un cierre que nunca salio del navegador no se recupera desde Supabase.
 
 Pruebas del flujo de guardado y recarga: `node --test tests/monthly-closures.test.cjs`.
+
+## Ocultar agotados en el catalogo
+
+Aplicar `supabase/migrations/202610150002_catalog_stock_visibility.sql` para que la vista publica respete `business_settings.out_of_stock_product_mode` antes de paginar o contar productos. Afecta listado, filtros, detalle y relacionados.
+
+Con `hide`, un producto con control de stock se muestra solo si tiene algun talle activo, no archivado y con unidades. Los productos sin control de stock siguen disponibles. Con `show`, los agotados publicados siguen visibles con su estado.
+
+Pruebas de visibilidad: `node --test tests/catalog-stock-visibility.test.cjs`.

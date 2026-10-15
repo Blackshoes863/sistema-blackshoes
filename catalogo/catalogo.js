@@ -315,9 +315,11 @@ function priceBlock(product) {
 
 function sizeChips(product, interactive = false, selectedSize = "") {
   const visibleSizes = BLACKSHOES_CATALOG_CONFIG.sizeAvailabilityMode === "hide-unavailable"
-    ? product.sizes.filter((variant) => variant.stock > 0)
+    ? product.sizes.filter((variant) => !product.tracksStock || variant.stock > 0)
     : product.sizes;
-  if (!visibleSizes.length) return '<span class="size-chip ok">Disponible</span>';
+  if (!visibleSizes.length) return productHasStock(product)
+    ? '<span class="size-chip ok">Disponible</span>'
+    : '<span class="size-chip out">Agotado</span>';
   return visibleSizes.map((variant) => {
     const available = !product.tracksStock || variant.stock > 0;
     const selected = variant.size === selectedSize ? " selected" : "";
@@ -428,7 +430,7 @@ function renderCatalogGrid() {
   const grid = document.getElementById("catalogGrid");
   const empty = document.getElementById("catalogEmpty");
   if (!grid) return;
-  const products = catalogRemotePaging ? catalogProducts : filteredProducts();
+  const products = catalogRemotePaging ? publicProducts() : filteredProducts();
   grid.innerHTML = products.map((product) => {
     const slug = productSlug(product);
     const firstSize = product.sizes.find((variant) => variant.stock > 0)?.size || product.sizes[0]?.size || "";
@@ -452,7 +454,10 @@ function renderCatalogGrid() {
       </article>
     `;
   }).join("");
-  if (empty) empty.hidden = products.length > 0 || catalogProducts.length > 0 || catalogTotalCount > 0;
+  if (empty) {
+    empty.hidden = products.length > 0;
+    if (catalogRemotePaging) empty.innerHTML = "<h2>No hay productos disponibles</h2>";
+  }
   renderCatalogPagination();
 }
 
