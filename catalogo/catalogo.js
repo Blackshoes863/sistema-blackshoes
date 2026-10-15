@@ -29,6 +29,8 @@ let catalogCurrentPage = 1;
 let catalogTotalCount = 0;
 let catalogPageSize = 20;
 let catalogSearchTimer = null;
+let catalogPageLoading = false;
+let catalogPageRequest = 0;
 
 function catalogRootPath() {
   return "/catalogo/";
@@ -212,6 +214,23 @@ function catalogFilterValues() {
   };
 }
 
+function catalogPageNumbers(current, totalPages) {
+  if (totalPages <= 7) return Array.from({ length: totalPages }, (_, index) => index + 1);
+  const pages = new Set([1, totalPages, current - 1, current, current + 1]);
+  if (current <= 4) [2, 3, 4, 5].forEach((page) => pages.add(page));
+  if (current >= totalPages - 3) {
+    for (let page = totalPages - 4; page < totalPages; page += 1) pages.add(page);
+  }
+  const result = [];
+  [...pages].filter((page) => page >= 1 && page <= totalPages).sort((a, b) => a - b).forEach((page) => {
+    const previous = result[result.length - 1];
+    if (previous && page - previous === 2) result.push(previous + 1);
+    else if (previous && page - previous > 2) result.push("...");
+    result.push(page);
+  });
+  return result;
+}
+
 function renderCatalogPagination() {
   const pagination = document.getElementById("catalogPagination");
   if (!pagination) return;
@@ -223,11 +242,39 @@ function renderCatalogPagination() {
   const totalPages = Math.max(1, Math.ceil(catalogTotalCount / catalogPageSize));
   catalogCurrentPage = Math.min(Math.max(1, catalogCurrentPage), totalPages);
   pagination.hidden = false;
+  pagination.setAttribute("aria-busy", String(catalogPageLoading));
   pagination.innerHTML = `
-    <button class="secondary-action" data-catalog-page-delta="-1" ${catalogCurrentPage <= 1 ? "disabled" : ""} type="button">Anterior</button>
-    <span>Pagina ${catalogCurrentPage} de ${totalPages}</span>
-    <button class="secondary-action" data-catalog-page-delta="1" ${catalogCurrentPage >= totalPages ? "disabled" : ""} type="button">Siguiente</button>
+    <div class="catalog-page-controls">
+      <button class="secondary-action" data-catalog-page-delta="-1" ${catalogPageLoading || catalogCurrentPage <= 1 ? "disabled" : ""} type="button">&larr; Anterior</button>
+      <div class="catalog-page-numbers">
+        ${catalogPageNumbers(catalogCurrentPage, totalPages).map((page) => page === "..."
+          ? '<span class="catalog-page-gap" aria-hidden="true">&hellip;</span>'
+          : `<button class="secondary-action catalog-page-number" data-catalog-page="${page}" aria-label="P\u00e1gina ${page}" ${page === catalogCurrentPage ? 'aria-current="page"' : ""} ${catalogPageLoading ? "disabled" : ""} type="button">${page}</button>`
+        ).join("")}
+      </div>
+      <button class="secondary-action" data-catalog-page-delta="1" ${catalogPageLoading || catalogCurrentPage >= totalPages ? "disabled" : ""} type="button">Siguiente &rarr;</button>
+    </div>
+    <span class="catalog-page-summary">P\u00e1gina ${catalogCurrentPage} de ${totalPages}</span>
+    ${totalPages > 7 ? `
+      <form class="catalog-page-jump" id="catalogPageJump">
+        <label for="catalogPageInput">Ir a p\u00e1gina</label>
+        <input id="catalogPageInput" name="page" type="number" min="1" max="${totalPages}" step="1" inputmode="numeric" required ${catalogPageLoading ? "disabled" : ""}>
+        <button class="secondary-action" type="submit" aria-label="Ir a la p\u00e1gina indicada" title="Ir a p\u00e1gina" ${catalogPageLoading ? "disabled" : ""}>&rarr;</button>
+      </form>` : ""}
   `;
+}
+
+function goToCatalogPage(page) {
+  const totalPages = Math.max(1, Math.ceil(catalogTotalCount / catalogPageSize));
+  const target = Number(page);
+  if (catalogPageLoading || !Number.isInteger(target) || target < 1 || target > totalPages || target === catalogCurrentPage) return;
+  clearTimeout(catalogSearchTimer);
+  loadRemoteCatalogPage(target).then((loaded) => {
+    if (loaded) window.scrollTo({ top: 0, behavior: "smooth" });
+  }).catch((error) => {
+    console.warn("No se pudo cambiar la pagina del catalogo", error);
+    renderStatus("No se pudo cargar la pagina. Intenta de nuevo.");
+  });
 }
 
 function filteredProducts() {
@@ -496,28 +543,39 @@ function catalogSlugFromUrl() {
 
 async function loadRemoteCatalogPage(page = catalogCurrentPage) {
   if (!catalogClient) return false;
-  const filters = catalogFilterValues();
-  renderStatus("Actualizando");
-  const { data, error } = await catalogClient.rpc("list_public_catalog_products", {
-    p_query: filters.query,
-    p_category: filters.category,
-    p_subcategory: filters.subcategory,
-    p_color: filters.color,
-    p_size: filters.size,
-    p_sort: filters.sort,
-    p_page: page,
-    p_page_size: catalogPageSize,
-  });
-  if (error) throw error;
-  catalogRemotePaging = true;
-  catalogCurrentPage = Number(data?.page || page || 1);
-  catalogPageSize = Number(data?.pageSize || catalogPageSize);
-  catalogTotalCount = Number(data?.totalCount || 0);
-  catalogProducts = (data?.rows || []).map(normalizeCatalogProduct);
-  renderRemoteFilterOptions(data?.filters || {});
-  renderCatalogGrid();
-  renderStatus(catalogTotalCount ? "Catalogo actualizado" : "Sin productos");
-  return true;
+  const requestId = ++catalogPageRequest;
+  catalogPageLoading = true;
+  renderCatalogPagination();
+  try {
+    const filters = catalogFilterValues();
+    renderStatus("Actualizando");
+    const { data, error } = await catalogClient.rpc("list_public_catalog_products", {
+      p_query: filters.query,
+      p_category: filters.category,
+      p_subcategory: filters.subcategory,
+      p_color: filters.color,
+      p_size: filters.size,
+      p_sort: filters.sort,
+      p_page: page,
+      p_page_size: catalogPageSize,
+    });
+    if (requestId !== catalogPageRequest) return false;
+    if (error) throw error;
+    catalogRemotePaging = true;
+    catalogCurrentPage = Number(data?.page || page || 1);
+    catalogPageSize = Number(data?.pageSize || catalogPageSize);
+    catalogTotalCount = Number(data?.totalCount || 0);
+    catalogProducts = (data?.rows || []).map(normalizeCatalogProduct);
+    renderRemoteFilterOptions(data?.filters || {});
+    renderCatalogGrid();
+    renderStatus(catalogTotalCount ? "Catalogo actualizado" : "Sin productos");
+    return true;
+  } finally {
+    if (requestId === catalogPageRequest) {
+      catalogPageLoading = false;
+      renderCatalogPagination();
+    }
+  }
 }
 
 async function loadRemoteProductDetail() {
@@ -620,11 +678,10 @@ document.getElementById("catalogColor")?.addEventListener("change", () => reload
 document.getElementById("catalogSize")?.addEventListener("change", () => reloadCatalogPage({ resetPage: true }));
 document.getElementById("catalogSort")?.addEventListener("change", () => reloadCatalogPage({ resetPage: true }));
 document.addEventListener("click", (event) => {
-  const pageButton = event.target.closest("[data-catalog-page-delta]");
+  const pageButton = event.target.closest("[data-catalog-page-delta], [data-catalog-page]");
   if (pageButton) {
-    catalogCurrentPage += Number(pageButton.dataset.catalogPageDelta || 0);
-    reloadCatalogPage({ resetPage: false });
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    if (pageButton.disabled) return;
+    goToCatalogPage(pageButton.dataset.catalogPage ?? (catalogCurrentPage + Number(pageButton.dataset.catalogPageDelta || 0)));
     return;
   }
   const galleryThumb = event.target.closest("[data-gallery-thumb]");
@@ -641,6 +698,12 @@ document.addEventListener("click", (event) => {
   }
   const sizeButton = event.target.closest("[data-select-size]");
   if (sizeButton) renderProductDetail(sizeButton.dataset.selectSize);
+});
+document.addEventListener("submit", (event) => {
+  if (event.target.id !== "catalogPageJump") return;
+  event.preventDefault();
+  const input = event.target.querySelector("input[name=page]");
+  if (input?.reportValidity()) goToCatalogPage(input.value);
 });
 document.addEventListener("change", (event) => {
   if (event.target.id === "productColorSelect") {

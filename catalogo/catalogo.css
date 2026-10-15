@@ -324,15 +324,69 @@ button.size-chip {
 
 .catalog-pagination {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: center;
   gap: 12px;
   margin: 24px 0 0;
 }
 
-.catalog-pagination span {
+.catalog-pagination[hidden] {
+  display: none;
+}
+
+.catalog-page-controls,
+.catalog-page-numbers,
+.catalog-page-jump {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.catalog-page-summary,
+.catalog-page-gap {
   color: var(--muted);
   font-weight: 800;
+}
+
+.catalog-page-number {
+  min-width: 38px;
+  padding: 0 6px;
+}
+
+.catalog-page-number[aria-current="page"] {
+  color: #702545;
+  background: #f9d5e4;
+  border-color: #db88ab;
+}
+
+.catalog-page-gap {
+  width: 18px;
+  text-align: center;
+}
+
+.catalog-page-jump {
+  margin: 0;
+  font-size: 14px;
+}
+
+.catalog-page-jump input {
+  width: 72px;
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font: inherit;
+}
+
+.catalog-pagination :is(button, input):focus-visible {
+  outline: 2px solid #a63e69;
+  outline-offset: 3px;
+}
+
+.catalog-pagination button:not(:disabled):hover {
+  border-color: #db88ab;
 }
 
 .catalog-pagination button {
@@ -342,6 +396,23 @@ button.size-chip {
 .catalog-pagination button:disabled {
   cursor: not-allowed;
   opacity: 0.45;
+}
+
+@media (max-width: 600px) {
+  .catalog-page-controls {
+    flex-wrap: wrap;
+    width: 100%;
+  }
+
+  .catalog-page-numbers {
+    order: -1;
+    flex-basis: 100%;
+    gap: 4px;
+  }
+
+  .catalog-page-number {
+    min-width: 32px;
+  }
 }
 
 .whatsapp-action.full {
