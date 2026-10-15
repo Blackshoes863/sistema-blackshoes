@@ -68,3 +68,17 @@ La configuracion tecnica esta en `app.js`:
 - `CLOUD_INITIAL_EXPENSE_DAYS`
 
 Hoy queda en 60 dias para ventas y gastos iniciales. Desde Configuracion > Carga de Datos se puede cambiar a 30, 60, 90, 180, 365 dias o Todo.
+
+## Cierres mensuales persistentes
+
+- Aplicar `supabase/migrations/202610150001_monthly_closures.sql` en Supabase.
+- El boton de cierre llama a `save_monthly_closure` y solo confirma el guardado cuando Supabase responde.
+- PostgreSQL calcula ventas, gastos y costo de mercaderia de todo el mes, con fechas de Argentina y excluyendo registros archivados. Las compras de mercaderia no se descuentan otra vez como gasto operativo.
+- El cierre conserva la definicion del Resumen: ingresos por ventas totales, menos gastos y costo vendido. No cambia la distincion de ingresos reales/ficticios de Estadisticas.
+- Se guarda un snapshot en `monthly_closures`. Volver a cerrar el mismo mes actualiza ese registro; no duplica cierres. Las nuevas operaciones no modifican un cierre ya guardado hasta volver a cerrarlo.
+- Al ingresar o sincronizar se descargan los cierres de Supabase, independientemente de los dias de ventas descargados al navegador.
+- Eliminar un cierre lo archiva mediante `archive_monthly_closure`; no modifica ventas ni gastos. La creacion, actualizacion y eliminacion quedan en `audit_log`.
+- Solo usuarios activos del personal pueden leer u operar cierres. El cliente no puede escribir la tabla directamente ni enviar importes calculados localmente.
+- Cierres antiguos que sigan en el navegador se conservan y muestran `Sin guardar en Supabase`. Volver a cerrar ese mes recalcula el mes completo y lo guarda en la base. Un cierre que nunca salio del navegador no se recupera desde Supabase.
+
+Pruebas del flujo de guardado y recarga: `node --test tests/monthly-closures.test.cjs`.

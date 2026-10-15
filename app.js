@@ -2067,6 +2067,62 @@ function requestCloudDashboardSummary(monthKey = state.selectedMonth || currentM
   });
 }
 
+let cloudMonthlyClosuresRevision = 0;
+let monthlyClosureSaveInProgress = false;
+
+function normalizeCloudMonthlyClosure(row) {
+  const summary = row?.summary;
+  const monthKey = String(row?.month || "").slice(0, 7);
+  if (!isUuid(row?.id) || !/^\d{4}-(0[1-9]|1[0-2])$/.test(monthKey) || !summary) {
+    throw new Error("Supabase devolvio un cierre mensual invalido.");
+  }
+  const values = ["monthRevenue", "monthExpenses", "monthMerchandiseCost", "monthResult", "monthSalesCount"];
+  if (values.some((key) => summary[key] == null || !Number.isFinite(Number(summary[key])))) {
+    throw new Error("Supabase devolvio un cierre mensual incompleto.");
+  }
+  return {
+    id: row.id,
+    monthKey,
+    label: monthLabel(monthKey),
+    closedAt: row.closed_at,
+    localIncome: Number(summary.monthRevenue),
+    webIncome: 0,
+    income: Number(summary.monthRevenue),
+    shipping: 0,
+    expenseTotal: Number(summary.monthExpenses),
+    merchandiseCost: Number(summary.monthMerchandiseCost),
+    result: Number(summary.monthResult),
+    salesCount: Number(summary.monthSalesCount),
+    source: "supabase",
+    syncStatus: "synced",
+  };
+}
+
+async function loadCloudMonthlyClosures() {
+  if (!cloudEnabledWithSession()) return false;
+  const revision = cloudMonthlyClosuresRevision;
+  const rows = [];
+  for (let offset = 0; ; offset += 1000) {
+    const { data, error } = await supabaseClient.from("monthly_closures")
+      .select("id,month,summary,closed_at,archived_at")
+      .order("month", { ascending: false })
+      .range(offset, offset + 999);
+    if (error) throw new Error(`leer cierres mensuales: ${error.message}`);
+    rows.push(...(data || []));
+    if (!data || data.length < 1000) break;
+  }
+  if (revision !== cloudMonthlyClosuresRevision) return false;
+  const cloudMonths = new Set(rows.map((row) => String(row.month).slice(0, 7)));
+  const saved = rows.filter((row) => !row.archived_at).map(normalizeCloudMonthlyClosure);
+  const localOnly = (state.monthlyClosures || []).filter((closure) =>
+    closure.syncStatus !== "synced" && !cloudMonths.has(closure.monthKey)
+  );
+  state.monthlyClosures = [...saved, ...localOnly]
+    .sort((a, b) => String(b.monthKey).localeCompare(String(a.monthKey)));
+  persistStateLocalOnly();
+  return true;
+}
+
 async function loadCloudData({ mode = "initial", force = false } = {}) {
   invalidateCloudSalesHistoryCache();
   invalidateCloudStockHistoryCache();
@@ -2079,6 +2135,12 @@ async function loadCloudData({ mode = "initial", force = false } = {}) {
   await loadCloudCustomersPage(state.customerFilters, state.customerPage || 1, { force: true });
   await loadCloudOperationalData({ mode, force });
   await loadCloudDashboardSummary(state.selectedMonth || currentMonthKey(), { force: true });
+  try {
+    await loadCloudMonthlyClosures();
+  } catch (error) {
+    console.warn("Cloud monthly closures load failed", error);
+    showActionToast("No pude leer los cierres mensuales de Supabase. Los cierres de este dispositivo se conservan.");
+  }
   persistStateLocalOnly();
   return true;
 }
@@ -10893,19 +10955,48 @@ function monthlyClosureMetrics(monthKey = state.selectedMonth || currentMonthKey
   };
 }
 
-function closeSelectedMonth() {
+async function closeSelectedMonth() {
+  if (monthlyClosureSaveInProgress) return;
   const monthKey = state.selectedMonth || currentMonthKey();
-  const metrics = monthlyClosureMetrics(monthKey);
   const existing = state.monthlyClosures.find((closure) => closure.monthKey === monthKey);
-  const closure = existing || { id: uid("monthly-close") };
-  Object.assign(closure, metrics);
-  if (!existing) state.monthlyClosures.push(closure);
-  state.monthlyClosures.sort((a, b) => String(b.monthKey).localeCompare(String(a.monthKey)));
-  state.monthlyClosuresPage = 1;
-  logActivity("closure", existing ? "Actualizo cierre mensual" : "Creo cierre mensual", closure.label || monthLabel(monthKey));
-  saveState();
-  renderMonthlyClosures();
-  renderDashboard();
+  const button = document.getElementById("closeSelectedMonthButton");
+  const label = button?.textContent;
+  monthlyClosureSaveInProgress = true;
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Guardando cierre...";
+  }
+  try {
+    let closure;
+    if (CLOUD_DATA_ENABLED) {
+      if (!cloudEnabledWithSession()) throw new Error("Ingresa con tu usuario para guardar el cierre.");
+      const { data, error } = await supabaseClient.rpc("save_monthly_closure", { p_month: `${monthKey}-01` });
+      if (error) throw new Error(error.message);
+      closure = normalizeCloudMonthlyClosure(data);
+      if (closure.monthKey !== monthKey) throw new Error("El mes devuelto por Supabase no coincide con el elegido.");
+      cloudMonthlyClosuresRevision += 1;
+    } else {
+      closure = { ...(existing || { id: uid("monthly-close") }), ...monthlyClosureMetrics(monthKey) };
+    }
+    state.monthlyClosures = state.monthlyClosures.filter((item) => item.monthKey !== monthKey);
+    state.monthlyClosures.push(closure);
+    state.monthlyClosures.sort((a, b) => String(b.monthKey).localeCompare(String(a.monthKey)));
+    state.monthlyClosuresPage = 1;
+    logActivity("closure", existing ? "Actualizo cierre mensual" : "Creo cierre mensual", closure.label);
+    if (CLOUD_DATA_ENABLED) persistStateLocalOnly();
+    else saveState();
+    renderMonthlyClosures();
+    renderDashboard();
+    showActionToast(CLOUD_DATA_ENABLED ? "Cierre mensual guardado en Supabase." : "Cierre mensual guardado.");
+  } catch (error) {
+    alert(`No pude guardar el cierre mensual: ${error.message}`);
+  } finally {
+    monthlyClosureSaveInProgress = false;
+    if (button) {
+      button.disabled = false;
+      button.textContent = label;
+    }
+  }
 }
 
 function deleteMonthlyClosure(closureId) {
@@ -10916,12 +11007,23 @@ function deleteMonthlyClosure(closureId) {
     message: `Se eliminara el cierre de ${closure.label || monthLabel(closure.monthKey)}. Las ventas y gastos cargados no se modifican.`,
     confirmText: "Eliminar",
     danger: true,
-    onConfirm: () => {
-      rememberDeletedRecord("monthlyClosures", closureId);
-      state.monthlyClosures = state.monthlyClosures.filter((item) => item.id !== closureId);
-      logActivity("closure", "Elimino cierre mensual", closure.label || monthLabel(closure.monthKey));
-      saveState();
-      renderMonthlyClosures();
+    onConfirm: async () => {
+      try {
+        if (CLOUD_DATA_ENABLED && closure.syncStatus === "synced") {
+          if (!cloudEnabledWithSession()) throw new Error("Ingresa con tu usuario para eliminar el cierre.");
+          const { error } = await supabaseClient.rpc("archive_monthly_closure", { p_closure_id: closureId });
+          if (error) throw new Error(error.message);
+          cloudMonthlyClosuresRevision += 1;
+        }
+        if (!CLOUD_DATA_ENABLED) rememberDeletedRecord("monthlyClosures", closureId);
+        state.monthlyClosures = state.monthlyClosures.filter((item) => item.id !== closureId);
+        logActivity("closure", "Elimino cierre mensual", closure.label || monthLabel(closure.monthKey));
+        if (CLOUD_DATA_ENABLED) persistStateLocalOnly();
+        else saveState();
+        renderMonthlyClosures();
+      } catch (error) {
+        alert(`No pude eliminar el cierre mensual: ${error.message}`);
+      }
     },
   });
 }
@@ -10938,7 +11040,7 @@ function renderMonthlyClosures() {
   state.monthlyClosuresPage = current;
   table.innerHTML = pageRows.length ? pageRows.map((closure) => `
     <tr>
-      <td><strong>${htmlAttr(closure.label || monthLabel(closure.monthKey))}</strong><br><small>${formatDateShort(String(closure.closedAt || "").slice(0, 10))}</small></td>
+      <td><strong>${htmlAttr(closure.label || monthLabel(closure.monthKey))}</strong><br><small>${formatDateShort(String(closure.closedAt || "").slice(0, 10))}</small>${CLOUD_DATA_ENABLED && closure.syncStatus !== "synced" && closure.source !== "historical-import" ? '<br><small class="text-danger">Sin guardar en Supabase</small>' : ""}</td>
       <td>${money(closure.income)}</td>
       <td>${money(closure.expenseTotal)}</td>
       <td>${money(closure.merchandiseCost)}</td>
