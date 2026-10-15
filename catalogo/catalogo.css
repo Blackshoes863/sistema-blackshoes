@@ -355,9 +355,9 @@ button.size-chip {
 }
 
 .catalog-page-number[aria-current="page"] {
-  color: #702545;
-  background: #f9d5e4;
-  border-color: #db88ab;
+  color: #254c2c;
+  background: #d9ead3;
+  border-color: #4d8b57;
 }
 
 .catalog-page-gap {
@@ -366,12 +366,12 @@ button.size-chip {
 }
 
 .catalog-pagination button:focus-visible {
-  outline: 2px solid #a63e69;
+  outline: 2px solid #4d8b57;
   outline-offset: 3px;
 }
 
 .catalog-pagination button:not(:disabled):hover {
-  border-color: #db88ab;
+  border-color: #4d8b57;
 }
 
 .catalog-pagination button {
