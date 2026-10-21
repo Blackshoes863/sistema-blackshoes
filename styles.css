@@ -2299,38 +2299,6 @@ body.auth-locked .auth-backdrop {
   text-transform: uppercase;
 }
 
-.backup-settings-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  flex-wrap: wrap;
-}
-
-.backup-settings-row div {
-  display: grid;
-  gap: 4px;
-}
-
-.backup-settings-row small {
-  color: var(--muted);
-  font-size: 0.78rem;
-  font-weight: 800;
-}
-
-.remote-backups-wrap td {
-  vertical-align: middle;
-}
-
-.remote-backups-wrap td:nth-child(3) {
-  min-width: 360px;
-}
-
-.remote-backups-wrap small {
-  color: var(--muted);
-  font-weight: 800;
-}
-
 .permission-tab-list {
   display: grid;
   grid-template-columns: repeat(3, minmax(135px, 1fr));

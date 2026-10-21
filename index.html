@@ -16,7 +16,7 @@
     <link rel="manifest" href="manifest.json?v=6">
     <link rel="icon" type="image/png" sizes="32x32" href="assets/blackshoes-favicon-32.png?v=2">
     <link rel="apple-touch-icon" href="assets/blackshoes-apple-touch.png?v=2">
-    <link rel="stylesheet" href="styles.css?v=96">
+    <link rel="stylesheet" href="styles.css?v=97">
   </head>
   <body class="auth-locked">
     <div class="app-shell">
@@ -272,6 +272,7 @@
               <select id="productSubcategoryFilter" aria-label="Filtrar por Subcategoría"></select>
               <select id="productStockFilter" aria-label="Filtrar por Stock">
                 <option value="all">Todos</option>
+                <option value="zero">Sin stock (0)</option>
                 <option value="tracked">Con Control de Stock</option>
                 <option value="untracked">Sin Control de Stock</option>
               </select>
@@ -693,7 +694,6 @@
               <h2>Porcentajes</h2>
             </div>
             <form class="settings-grid" id="businessSettingsForm">
-              <label><span>Comisión Mercado Pago %</span><input name="mercadoPagoCommissionRate" type="number" min="0" step="0.01"></label>
               <label><span>Costo sin costo cargado %</span><input name="missingCostFallbackPercent" type="number" min="0" max="100" step="0.01"></label>
               <button class="primary" type="submit">Guardar Porcentajes</button>
             </form>
@@ -758,37 +758,10 @@
           </section>
           <section class="panel">
             <div class="panel-head">
-              <h2>Respaldo</h2>
-            </div>
-            <div class="backup-settings-row">
-              <div>
-                <strong>Importar respaldo Excel</strong>
-                <small>Usa el archivo exportado desde Estadísticas y reemplaza los datos actuales.</small>
-              </div>
-              <button class="secondary" id="importBackupButton" type="button">Importar Respaldo</button>
-              <input id="importBackupInput" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
-            </div>
-            <div class="backup-settings-row">
-              <div>
-                <strong>Respaldos automaticos</strong>
-                <small>Modo anterior deshabilitado. La base nueva usa tablas separadas, auditoria y movimientos.</small>
-              </div>
-              <button class="secondary" id="openRemoteBackupsButton" type="button" disabled>Ver Respaldos</button>
-            </div>
-            <div class="backup-settings-row">
-              <div>
-                <strong>Supabase granular</strong>
-                <small>Activo para productos, categorias y variantes. Ventas, pagos, stock y gastos se conectan en las siguientes etapas.</small>
-              </div>
-              <button class="danger" id="publishLocalPrimaryButton" type="button" disabled>Subir esta PC como base</button>
-            </div>
-          </section>
-          <section class="panel">
-            <div class="panel-head">
               <h2>Historial de Movimientos</h2>
               <button class="secondary" id="openActivityLogButton" type="button">Ver Movimientos</button>
             </div>
-            <p class="muted">Registra los ultimos 800 cambios importantes del sistema.</p>
+            <p class="muted">Registra los ultimos 200 cambios importantes del sistema.</p>
           </section>
           <section class="panel">
             <div class="panel-head">
@@ -1473,31 +1446,6 @@
       </section>
     </div>
 
-    <div class="modal-backdrop" id="remoteBackupsModal" aria-hidden="true">
-      <section class="modal wide-modal remote-backups-modal" role="dialog" aria-modal="true" aria-labelledby="remoteBackupsTitle">
-        <button class="modal-close" id="closeRemoteBackupsModal" type="button" aria-label="Cerrar">x</button>
-        <span class="modal-kicker">Configuracion</span>
-        <h2 id="remoteBackupsTitle">Respaldos Automaticos</h2>
-        <p class="muted">Se guardan antes de cada guardado grande y solo quedan los ultimos 15.</p>
-        <div class="table-wrap remote-backups-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Fecha</th>
-                <th>Motivo</th>
-                <th>Datos</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody id="remoteBackupsTable"></tbody>
-          </table>
-        </div>
-        <div class="modal-actions">
-          <button class="danger" id="closeRemoteBackupsButton" type="button">Cerrar</button>
-        </div>
-      </section>
-    </div>
-
     <div class="modal-backdrop" id="confirmModal" aria-hidden="true">
       <section class="modal confirm-modal" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
         <button class="modal-close" id="closeConfirmModal" type="button" aria-label="Cerrar">x</button>
@@ -1538,10 +1486,10 @@
     <div class="action-toast" id="actionToast" role="status" aria-live="polite"></div>
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="app.js?v=286"></script>
+    <script src="app.js?v=287"></script>
     <script>
       if ("serviceWorker" in navigator && location.protocol !== "file:") {
-        navigator.serviceWorker.register("sw.js?v=298");
+        navigator.serviceWorker.register("sw.js?v=299");
       }
     </script>
   </body>

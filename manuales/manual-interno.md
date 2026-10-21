@@ -51,16 +51,13 @@ El sistema no necesita descargar todo el historial apenas se abre.
 Modo inicial:
 
 - configuracion del negocio;
-- productos, categorias y variantes;
-- clientes;
+- categorias y primera pagina de productos con sus variantes;
+- pagina de clientes necesaria para la vista;
 - ventas recientes y deudas pendientes;
 - gastos recientes;
 - ultimos movimientos de stock.
 
-Modo completo:
-
-- se descarga al entrar a Historial de Ventas, Clientes, Gastos y Mercaderia o Estadisticas;
-- tambien se descarga al tocar sincronizar manualmente.
+Los listados siguientes se descargan por paginas y usan cache en memoria. Resumen, Estadisticas y cierres consultan agregados o periodos completos por RPC: sus totales no dependen de las paginas descargadas. Cambiar de pestaña no fuerza la descarga de todo el historial.
 
 La configuracion tecnica esta en `app.js`:
 
@@ -118,3 +115,44 @@ Aplicar `supabase/migrations/202610210001_product_price_update.sql`.
 - Si falta aplicar la migracion o Supabase rechaza el cambio, se informa el error y el formulario queda abierto.
 
 Pruebas: `node --test tests/product-price-update.test.cjs`.
+
+## Configuracion vigente
+
+- Se mantienen costo estimado, catalogo publico, carga inicial de datos, plantillas de gastos fijos, categorias/codigos, los ultimos 200 movimientos del historial local de actividad y usuarios/permisos. Este limite no elimina registros de auditoria de Supabase.
+- Carga de Datos sigue enviando los dias elegidos a `get_operational_snapshot`. El valor `Todo` solo amplia ese snapshot inicial; no desactiva la paginacion de los listados ni cambia los totales por RPC.
+- Se retiro el bloque de respaldo anterior: importacion Excel sobre el estado del navegador, restauracion de snapshots antiguos y subida de una PC como base. Esos mecanismos no restauran las tablas operativas actuales.
+- La exportacion Excel de Estadisticas se mantiene y consulta `get_excel_export_data`. No se presenta como una restauracion de Supabase desde el navegador.
+- Se retiro el campo de comision Mercado Pago porque solo afecta ventas online, modulo desactivado en BlackShoes. No se borraron sus valores historicos.
+- Web y Taller no se ofrecen como roles nuevos mientras sus modulos esten desactivados. Si una cuenta ya tenia uno, su seleccion se conserva al editar permisos.
+- Esta limpieza no modifica tablas de Supabase, operaciones, cuentas ni datos guardados; no requiere ejecutar SQL. Los mecanismos internos compartidos del guardado antiguo no se eliminan en esta limpieza de Configuracion.
+
+Pruebas: `node --test tests/settings-cleanup.test.cjs`.
+
+## Filtro de productos sin stock
+
+Aplicar `supabase/migrations/202610210002_products_zero_stock_filter.sql`.
+
+- En Productos, el desplegable de stock incorpora `Sin stock (0)`.
+- Incluye productos con control de stock y suma cero en sus variantes activas/no archivadas. Si no tiene variantes activas, el total es cero. Un producto con algun talle disponible queda afuera.
+- No incluye productos sin control de stock, archivados ni el producto interno de ventas manuales.
+- El filtro se aplica en PostgreSQL antes del conteo y la paginacion, junto con busqueda, categoria, subcategoria y publicacion. La cache distingue cada combinacion de filtros.
+- Cambiar el filtro vuelve a la pagina 1. No cambia la visibilidad del catalogo publico ni modifica stock o productos.
+
+Pruebas: `node --test tests/product-zero-stock.test.cjs`.
+
+## Carga mensual de gastos fijos
+
+Aplicar `supabase/migrations/202610210003_fixed_expenses.sql`.
+
+- El modal toma el importe base de cada plantilla; se pueden editar los importes y seleccionar cuales cargar. Los importes se muestran con separadores de miles y se interpretan con el mismo lector del sistema, tanto en la plantilla como en la carga mensual.
+- La carga llama a `register_fixed_expenses` con fecha, plantillas e importes. Supabase valida y guarda todo en una transaccion: si un gasto falla, no queda una carga parcial.
+- Se guarda en `expenses`, con `fixed_template_id` y `fixed_month`. Hay una sola fila activa por plantilla/mes: una nueva carga del mismo mes actualiza esa fila, no la duplica. No modifica gastos manuales ni otros meses. Una fila archivada no se reactiva.
+- Un reintento conserva `operation_id` y devuelve el resultado anterior sin aplicar otra vez la operacion. Durante la carga los controles y el cierre del modal quedan bloqueados.
+- Las fechas se interpretan en Argentina. Solo personal activo puede ejecutar la RPC; cada creacion o actualizacion queda auditada.
+- El listado paginado, Estadisticas y Excel reconocen estos registros como fijos, aunque la categoria sea Servicios u otra normalmente variable. Los totales y cierres mensuales los incluyen como cualquier gasto operativo; un cierre anterior sigue siendo un snapshot hasta volver a cerrarlo.
+- Tras confirmar, se invalida la cache y se refrescan el listado y el Resumen. Una respuesta vieja del listado no pisa esa actualizacion.
+- Si falla el guardado, el modal conserva la seleccion/importes para reintentar y no anuncia exito. Si el guardado se confirma pero falla la cache local, se informa que ya quedo guardado y se pide recargar.
+- Las plantillas conservan su almacenamiento de configuracion actual. La migracion no importa automaticamente gastos viejos que solo hayan quedado en el navegador ni cambia su configuracion.
+
+Pruebas frontend: `node --test tests/fixed-expenses.test.cjs`.
+La prueba PostgreSQL `tests/fixed-expenses-postgres.test.cjs` usa un runtime PGlite temporal indicado en `BLACKSHOES_PGLITE_MODULE`; no agrega una dependencia de produccion ni necesita credenciales reales. Valida atomicidad, reintentos, actualizacion mensual, permisos y clasificacion en las lecturas.

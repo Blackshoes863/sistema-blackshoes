@@ -185,7 +185,7 @@ const CUSTOMER_PAGE_SIZE = 40;
 const SALES_HISTORY_PAGE_SIZE = 20;
 const STOCK_HISTORY_LIMIT = 100;
 const STOCK_HISTORY_PAGE_SIZE = 20;
-const ACTIVITY_LOG_LIMIT = 800;
+const ACTIVITY_LOG_LIMIT = 200;
 const ACTIVITY_LOG_PAGE_SIZE = 40;
 const CUSTOMER_INFO_PAGE_SIZE = 10;
 const MONTHLY_CLOSURES_PAGE_SIZE = 15;
@@ -232,6 +232,7 @@ const cloudExpensesCache = new Map();
 const cloudExpensesLoads = new Map();
 const cloudExpensesFailures = new Map();
 const cloudExpenseRowsByKey = new Map();
+let cloudExpensesRevision = 0;
 
 function openConfirmModal({ title = "Confirmar accion", message = "", confirmText = "Confirmar", cancelText = "Cancelar", danger = false, onConfirm = null, onCancel = null }) {
   pendingConfirmAction = typeof onConfirm === "function" ? onConfirm : null;
@@ -1718,10 +1719,12 @@ function normalizeCloudExpense(row = {}) {
     date: isoDateFromTimestamp(row.expense_at || row.created_at),
     concept: row.note || row.category || "Gasto",
     category: row.category || "Otros",
-    kind: "variable",
+    kind: row.fixed_template_id ? "fijo" : (expenseCategoryRules[row.category]?.behavior || "variable"),
     area: "local",
     amount: Number(row.amount || 0),
     paymentMethod: row.payment_method || "",
+    source: row.fixed_template_id ? "fixed-monthly" : "manual",
+    fixedTemplateId: row.fixed_template_id || "",
     createdAt: row.created_at || "",
   };
 }
@@ -3210,24 +3213,6 @@ async function createRemoteStateBackup(remoteState, reason = "auto") {
   return true;
 }
 
-async function listRemoteStateBackups() {
-  if (!supabaseClient || !supabaseSession) return [];
-  const { data, error } = await supabaseClient
-    .from("app_config")
-    .select("key,value,updated_at")
-    .like("key", `${SUPABASE_BACKUP_KEY_PREFIX}%`)
-    .order("updated_at", { ascending: false })
-    .limit(SUPABASE_MAX_BACKUPS);
-  if (error) throw new Error(`respaldos: ${error.message}`);
-  return data || [];
-}
-
-function backupReasonLabel(reason = "") {
-  if (reason === "before-save") return "Antes de guardar";
-  if (reason === "before-restore") return "Antes de restaurar";
-  return reason || "Automatico";
-}
-
 function backupDateLabel(value) {
   const date = new Date(value || "");
   if (Number.isNaN(date.getTime())) return "-";
@@ -3237,223 +3222,6 @@ function backupDateLabel(value) {
     year: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
-  });
-}
-
-function backupSummaryLabel(summary = {}) {
-  return [
-    `${summary.sales || 0} ventas local`,
-    `${summary.onlineOrders || 0} ventas online`,
-    `${summary.products || 0} productos`,
-    `${summary.customers || 0} clientes`,
-  ].join(" · ");
-}
-
-function renderRemoteBackupsTable(backups = []) {
-  const table = document.getElementById("remoteBackupsTable");
-  if (!table) return;
-  if (!backups.length) {
-    table.innerHTML = `<tr><td colspan="4">Todavia no hay respaldos automaticos.</td></tr>`;
-    return;
-  }
-  table.innerHTML = backups.map((backup) => {
-    const meta = backup.value?.backupMeta || {};
-    const createdAt = meta.createdAt || backup.updated_at;
-    return `
-      <tr>
-        <td><strong>${htmlAttr(backupDateLabel(createdAt))}</strong></td>
-        <td>${htmlAttr(backupReasonLabel(meta.reason))}</td>
-        <td><small>${htmlAttr(backupSummaryLabel(meta.summary || stateDataSummary(backup.value || {})))}</small></td>
-        <td class="row-actions"><button class="tiny-action danger-action" data-restore-remote-backup="${htmlAttr(backup.key)}" type="button">Restaurar</button></td>
-      </tr>
-    `;
-  }).join("");
-}
-
-async function openRemoteBackupsModal() {
-  const modal = document.getElementById("remoteBackupsModal");
-  const table = document.getElementById("remoteBackupsTable");
-  if (!modal || !table) return;
-  modal.classList.add("open");
-  modal.setAttribute("aria-hidden", "false");
-  table.innerHTML = `<tr><td colspan="4">Cargando respaldos...</td></tr>`;
-  try {
-    await pruneRemoteStateBackups();
-    renderRemoteBackupsTable(await listRemoteStateBackups());
-  } catch (error) {
-    table.innerHTML = `<tr><td colspan="4">No pude leer respaldos: ${htmlAttr(error.message)}</td></tr>`;
-  }
-}
-
-function closeRemoteBackupsModal() {
-  const modal = document.getElementById("remoteBackupsModal");
-  if (!modal) return;
-  modal.classList.remove("open");
-  modal.setAttribute("aria-hidden", "true");
-}
-
-function statePreparedForBackupRestore(backupState = {}, currentRemoteState = {}) {
-  const next = normalizeState(backupState);
-  delete next.backupMeta;
-  const deletedRecords = normalizeDeletedRecords(next.deletedRecords);
-  const deletedAt = new Date().toISOString();
-  SUPABASE_RECORD_COLLECTIONS.forEach(({ collection, stateKey }) => {
-    const restoredIds = new Set((next[stateKey] || []).map((record) => record.id).filter(Boolean));
-    (currentRemoteState[stateKey] || []).forEach((record) => {
-      if (!record?.id || restoredIds.has(record.id)) return;
-      deletedRecords[collection] = deletedRecords[collection] || {};
-      deletedRecords[collection][record.id] = deletedAt;
-    });
-  });
-  next.deletedRecords = deletedRecords;
-  next.localSyncPending = false;
-  next.systemMigrationPending = false;
-  next.offline = false;
-  return normalizeState(next);
-}
-
-async function restoreRemoteBackup(backupKey) {
-  if (!supabaseClient || !supabaseSession || !backupKey) return;
-  renderAuthState("Restaurando respaldo...");
-  try {
-    const { data, error } = await supabaseClient
-      .from("app_config")
-      .select("value")
-      .eq("key", backupKey)
-      .maybeSingle();
-    if (error || !data?.value) throw new Error(error?.message || "No encontre ese respaldo.");
-    const previousRecordState = await loadRemoteRecordState();
-    const previousLegacyState = await fetchRemoteStateValue();
-    const currentRemoteState = previousRecordState && previousLegacyState
-      ? mergeDataStates(previousLegacyState, previousRecordState)
-      : previousRecordState || previousLegacyState || state;
-    const backedUp = await createRemoteStateBackup(currentRemoteState, "before-restore");
-    if (!backedUp) throw new Error("No pude crear el respaldo de seguridad previo a restaurar.");
-    const restoredState = statePreparedForBackupRestore(data.value, currentRemoteState);
-    const recordsSaved = await saveRemoteRecords(restoredState);
-    if (!recordsSaved) throw new Error("No pude guardar los registros restaurados.");
-    const { error: configError } = await supabaseClient.from("app_config").upsert({
-      key: SUPABASE_STATE_KEY,
-      value: restoredState,
-      updated_by: supabaseSession.user.id,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: "key" });
-    if (configError) throw new Error(configError.message);
-    const uiSnapshot = localUiSnapshot();
-    state = normalizeState(restoredState);
-    restoreLocalUiSnapshot(uiSnapshot);
-    clearPendingRemoteChanges(state);
-    businessStateDirty = false;
-    remoteSavePending = false;
-    persistStateLocalOnly();
-    lastDirtyComparisonState = cloneStateForDirtyComparison(state);
-    await pruneRemoteStateBackups();
-    closeRemoteBackupsModal();
-    render();
-    renderAuthState("Respaldo restaurado.");
-    showActionToast("Respaldo restaurado.");
-  } catch (error) {
-    console.warn("Restore backup failed", error);
-    renderAuthState(`No pude restaurar respaldo: ${error.message}`);
-    showActionToast("No pude restaurar el respaldo.");
-  }
-}
-
-function primaryPublishSummary(value = {}) {
-  const summary = stateDataSummary(value);
-  const lines = [
-    `Productos: ${summary.products}`,
-    `Clientes: ${summary.customers}`,
-    `Ventas local: ${summary.sales}`,
-    `Gastos: ${summary.expenses}`,
-    `Compras: ${summary.purchases}`,
-    `Stock: ${summary.stockHistory}`,
-  ];
-  if (MODULE_FLAGS.onlineSales) lines.splice(3, 0, `Ventas online: ${summary.onlineOrders}`);
-  if (MODULE_FLAGS.workshop) lines.splice(lines.length - 1, 0, `Taller: ${summary.workshopOrders}`);
-  return lines.join(" · ");
-}
-
-async function publishLocalStateAsPrimary() {
-  if (REMOTE_SYNC_DISABLED && CLOUD_DATA_ENABLED) {
-    showActionToast("La base nueva usa tablas separadas. No se sube estado completo.");
-    renderAuthState("Modo Supabase granular activo.");
-    return;
-  }
-  if (!isAdminProfile()) {
-    showActionToast("Solo admin puede subir la base principal.");
-    return;
-  }
-  if (!supabaseClient || !supabaseSession || !navigator.onLine) {
-    showActionToast("Necesitás conexión y sesión iniciada.");
-    return;
-  }
-  const snapshot = normalizeState(JSON.parse(JSON.stringify({
-    ...state,
-    localSyncPending: false,
-    systemMigrationPending: false,
-    offline: false,
-  })));
-  if (!hasLocalRepairData(snapshot)) {
-    showActionToast("Esta PC no tiene datos operativos para subir.");
-    renderAuthState("Esta PC no tiene ventas, clientes ni gastos para subir como base.");
-    return;
-  }
-  logActivity("backup", "Subio base principal", primaryPublishSummary(state));
-  snapshot.activityLog = normalizeState(state).activityLog;
-  remoteSaveInProgress = true;
-  renderAuthState("Subiendo esta PC como base principal...");
-  try {
-    const previousRecordState = await loadRemoteRecordState();
-    const previousLegacyState = await fetchRemoteStateValue();
-    const previousRemoteState = previousRecordState && previousLegacyState
-      ? mergeDataStates(previousLegacyState, previousRecordState)
-      : previousRecordState || previousLegacyState;
-    if (previousRemoteState) {
-      const backedUp = await createRemoteStateBackup(previousRemoteState, "before-primary-publish");
-      if (!backedUp) throw new Error("No pude crear respaldo previo.");
-    }
-    const preparedState = statePreparedForBackupRestore(snapshot, previousRemoteState || {});
-    const recordsSaved = await saveRemoteRecords(preparedState);
-    if (!recordsSaved) throw new Error("No pude guardar registros separados.");
-    const { error } = await supabaseClient.from("app_config").upsert({
-      key: SUPABASE_STATE_KEY,
-      value: preparedState,
-      updated_by: supabaseSession.user.id,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: "key" });
-    if (error) throw new Error(error.message);
-    state = normalizeState(preparedState);
-    clearPendingRemoteChanges(state);
-    businessStateDirty = false;
-    remoteSavePending = false;
-    persistStateLocalOnly();
-    lastDirtyComparisonState = cloneStateForDirtyComparison(state);
-    await pruneRemoteStateBackups();
-    persistStateLocalOnly();
-    render();
-    renderAuthState("Base principal subida a Supabase.");
-    showActionToast("Base principal subida.");
-  } catch (error) {
-    console.warn("Primary publish failed", error);
-    state.localSyncPending = true;
-    persistStateLocalOnly();
-    renderAuthState(`No pude subir base principal: ${error.message}`);
-    showActionToast("No pude subir la base principal.");
-  } finally {
-    remoteSaveInProgress = false;
-    renderConnection();
-  }
-}
-
-function confirmPublishLocalStateAsPrimary() {
-  const summary = primaryPublishSummary(state);
-  openConfirmModal({
-    title: "Subir esta PC como base principal",
-    message: `Esto reemplaza la base online de Supabase con los datos de esta PC. Se crea respaldo previo. Revisá: ${summary}.`,
-    confirmText: "Subir Base",
-    danger: true,
-    onConfirm: publishLocalStateAsPrimary,
   });
 }
 
@@ -6258,6 +6026,10 @@ function filteredProducts() {
     .filter((product) => !filters.category || filters.category === "all" || product.category === filters.category)
     .filter((product) => !filters.subcategory || filters.subcategory === "all" || product.subcategory === filters.subcategory)
     .filter((product) => {
+      if (filters.stock === "zero") {
+        const stock = productHasSizeVariants(product) ? productSizeStockTotal(product) : Number(product.stock || 0);
+        return product.tracksStock && stock === 0;
+      }
       if (filters.stock === "tracked") return product.tracksStock;
       if (filters.stock === "untracked") return !product.tracksStock;
       return true;
@@ -8067,6 +7839,7 @@ async function loadCloudExpensesPage(filters = state.expenseFilters || {}, page 
   if (cloudExpensesLoads.has(key)) return cloudExpensesLoads.get(key);
   const recentFailureAt = cloudExpensesFailures.get(key) || 0;
   if (!force && Date.now() - recentFailureAt < 30000) return null;
+  const revision = cloudExpensesRevision;
   const load = (async () => {
     const { data, error } = await supabaseClient.rpc("list_expenses_page", {
       p_query: request.query,
@@ -8079,6 +7852,7 @@ async function loadCloudExpensesPage(filters = state.expenseFilters || {}, page 
       p_page: request.page,
       p_page_size: request.pageSize,
     });
+    if (revision !== cloudExpensesRevision) return null;
     if (error) throw new Error(`gastos: ${error.message}`);
     const rows = (data?.rows || []).map(normalizeCloudExpensePageRow);
     const result = {
@@ -8097,11 +7871,11 @@ async function loadCloudExpensesPage(filters = state.expenseFilters || {}, page 
   try {
     return await load;
   } catch (error) {
-    cloudExpensesFailures.set(key, Date.now());
+    if (revision === cloudExpensesRevision) cloudExpensesFailures.set(key, Date.now());
     console.warn("Cloud expenses failed", error);
     return null;
   } finally {
-    cloudExpensesLoads.delete(key);
+    if (cloudExpensesLoads.get(key) === load) cloudExpensesLoads.delete(key);
   }
 }
 
@@ -8116,7 +7890,9 @@ function requestCloudExpensesPage(filters = state.expenseFilters || {}, page = s
 }
 
 function invalidateCloudExpensesCache() {
+  cloudExpensesRevision += 1;
   cloudExpensesCache.clear();
+  cloudExpensesLoads.clear();
   cloudExpensesFailures.clear();
   cloudExpenseRowsByKey.clear();
   cloudDashboardSummaryCache.clear();
@@ -10610,6 +10386,9 @@ function confirmOnlineMissingResolved() {
   renderOnlineMissingList();
 }
 
+let fixedExpensesInProgress = false;
+let fixedExpensesOperation = null;
+
 function renderFixedExpensesTable() {
   const table = document.getElementById("fixedExpensesTable");
   if (!table) return;
@@ -10618,19 +10397,21 @@ function renderFixedExpensesTable() {
   table.innerHTML = activeTemplates.map((template) => `
     <tr>
       <td><input type="checkbox" data-fixed-enabled="${htmlAttr(template.id)}"></td>
-      <td><strong>${template.concept}</strong></td>
+      <td><strong>${htmlAttr(template.concept)}</strong></td>
       <td>${expenseCategoryLabel(template.category)}</td>
       <td>
         <div class="money-field fixed-expense-amount">
           <span>$</span>
-          <input data-fixed-amount="${htmlAttr(template.id)}" type="number" min="0" step="1" value="">
+          <input data-fixed-amount="${htmlAttr(template.id)}" type="number" min="0" step="1" value="${Number(template.amount || 0) > 0 ? Number(template.amount) : ""}">
         </div>
       </td>
     </tr>
   `).join("") || `<tr><td colspan="4">No hay gastos fijos precargados.</td></tr>`;
+  formatAllMoneyInputs(table);
 }
 
 function openFixedExpensesModal() {
+  if (fixedExpensesInProgress) return;
   const dateInput = document.getElementById("fixedExpensesDate");
   if (dateInput) dateInput.value = todayIso();
   renderFixedExpensesTable();
@@ -10641,58 +10422,92 @@ function openFixedExpensesModal() {
 }
 
 function closeFixedExpensesModal() {
+  if (fixedExpensesInProgress) return;
   const modal = document.getElementById("fixedExpensesModal");
   if (!modal) return;
   modal.classList.remove("open");
   modal.setAttribute("aria-hidden", "true");
 }
 
-function confirmFixedExpenses() {
-  const date = normalizeDateInput(document.getElementById("fixedExpensesDate")?.value);
-  if (!date) {
-    alert("Elegí una fecha válida.");
-    return;
-  }
-  const key = monthKeyFromDate(date);
-  let loaded = 0;
-  state.fixedExpenseTemplates.filter((template) => !template.disabled).forEach((template) => {
-    const enabled = document.querySelector(`[data-fixed-enabled="${template.id}"]`)?.checked;
-    const amount = Number(document.querySelector(`[data-fixed-amount="${template.id}"]`)?.value || 0);
-    if (!enabled || amount <= 0) return;
-    const existing = state.expenses.find((expense) => expense.source === "fixed-monthly" && expense.fixedTemplateId === template.id && monthKeyFromDate(expense.date) === key);
-    const payload = {
-      date,
-      concept: template.concept,
-      category: template.category,
-      kind: "fijo",
-      area: template.area,
-      amount,
-      source: "fixed-monthly",
-      fixedTemplateId: template.id,
-    };
-    if (existing) {
-      Object.assign(existing, payload);
+async function confirmFixedExpenses() {
+  if (fixedExpensesInProgress) return false;
+  const modal = document.getElementById("fixedExpensesModal");
+  const button = document.getElementById("confirmFixedExpensesButton");
+  const label = button?.textContent;
+  const controls = Array.from(modal?.querySelectorAll("button, input, select") || []).map((element) => [element, element.disabled]);
+  let confirmedInCloud = false;
+  try {
+    const date = normalizeDateInput(document.getElementById("fixedExpensesDate")?.value);
+    if (!date) throw new Error("Elegi una fecha valida.");
+    const key = monthKeyFromDate(date);
+    const selected = state.fixedExpenseTemplates.filter((template) => !template.disabled
+      && document.querySelector(`[data-fixed-enabled="${template.id}"]`)?.checked);
+    if (!selected.length) throw new Error("Marca al menos un gasto fijo.");
+    const expenses = selected.map((template) => {
+      const amount = parseMoneyInput(document.querySelector(`[data-fixed-amount="${template.id}"]`)?.value || 0);
+      if (!Number.isFinite(amount) || amount <= 0) throw new Error(`Ingresa un importe mayor a cero para ${template.concept}.`);
+      if (expenseCategoryRules[template.category]?.type === "purchase") throw new Error("Un gasto fijo no puede ser una compra de mercaderia.");
+      return { template_id: template.id, concept: template.concept, category: template.category, amount };
+    });
+    if (CLOUD_DATA_ENABLED && !cloudEnabledWithSession()) throw new Error("Ingresa con tu usuario para cargar gastos fijos en Supabase.");
+    fixedExpensesInProgress = true;
+    controls.forEach(([element]) => { element.disabled = true; });
+    if (button) button.textContent = "Guardando gastos fijos...";
+    if (CLOUD_DATA_ENABLED) {
+      const operationKey = JSON.stringify({ date, expenses });
+      if (fixedExpensesOperation?.key !== operationKey) fixedExpensesOperation = { key: operationKey, id: cloudOperationId() };
+      const { data, error } = await supabaseClient.rpc("register_fixed_expenses", {
+        p_operation_id: fixedExpensesOperation.id,
+        p_date: date,
+        p_expenses: expenses,
+      });
+      if (error) throw new Error(error.message);
+      if (data?.savedCount !== expenses.length || !Array.isArray(data?.expenses) || data.expenses.length !== expenses.length
+        || data.expenses.some((expense) => !expense.id || !expense.fixed_template_id || !Number.isFinite(Number(expense.amount)) || Number(expense.amount) <= 0)) {
+        throw new Error("Supabase no confirmo la carga completa de los gastos fijos.");
+      }
+      confirmedInCloud = true;
+      data.expenses.forEach(mergeCloudExpenseRecord);
+      invalidateCloudExpensesCache();
+      state.expensesPage = 1;
+      persistStateLocalOnly();
+      await loadCloudExpensesPage(state.expenseFilters, 1, { force: true });
+      loadCloudDashboardSummary(state.selectedMonth || currentMonthKey(), { force: true }).catch((error) => console.warn("Cloud dashboard refresh failed", error));
     } else {
-      state.expenses.push({ id: uid("expense"), createdAt: new Date().toISOString(), ...payload });
+      expenses.forEach((expense) => {
+        const existing = state.expenses.find((row) => row.source === "fixed-monthly" && row.fixedTemplateId === expense.template_id && monthKeyFromDate(row.date) === key);
+        const payload = { date, concept: expense.concept, category: expense.category, amount: expense.amount, kind: "fijo", area: "local", source: "fixed-monthly", fixedTemplateId: expense.template_id };
+        if (existing) Object.assign(existing, payload);
+        else state.expenses.push({ id: uid("expense"), createdAt: new Date().toISOString(), ...payload });
+      });
+      state.expensesPage = 1;
     }
-    loaded += 1;
-  });
-  if (!loaded) {
-    alert("Marcá al menos un gasto fijo con importe mayor a 0.");
-    return;
+    logActivity("expense", "Cargo gastos fijos", `${expenses.length} gastos - ${monthLabel(key)}`);
+    if (CLOUD_DATA_ENABLED) persistStateLocalOnly();
+    else saveState();
+    render();
+    showActionToast("Gastos fijos guardados.");
+    fixedExpensesOperation = null;
+    return true;
+  } catch (error) {
+    if (confirmedInCloud) {
+      fixedExpensesOperation = null;
+      alert(`Los gastos fijos se guardaron en Supabase, pero no pude refrescar la vista. Recarga el sistema: ${error.message}`);
+      return true;
+    }
+    alert(`No pude cargar los gastos fijos: ${error.message}`);
+    return false;
+  } finally {
+    fixedExpensesInProgress = false;
+    controls.forEach(([element, disabled]) => { element.disabled = disabled; });
+    if (button) button.textContent = label;
   }
-  state.expensesPage = 1;
-  logActivity("expense", "Cargo gastos fijos", `${loaded} gastos - ${monthLabel(key)}`);
-  saveState();
-  closeFixedExpensesModal();
-  render();
 }
 
 function renderSettings() {
   const form = document.getElementById("businessSettingsForm");
   if (!form) return;
   const settings = businessSettings();
-  form.elements.mercadoPagoCommissionRate.value = settings.mercadoPagoCommissionRate;
   form.elements.missingCostFallbackPercent.value = missingCostFallbackPercent(settings.missingCostFallbackRate);
   const catalogForm = document.getElementById("catalogSettingsForm");
   const catalog = catalogSettings();
@@ -10714,7 +10529,12 @@ function renderSettings() {
 }
 
 function userRoleOptions(selected = "local") {
-  return ["admin", "dueno", "local", "web", "taller", "consulta"]
+  const roles = ["admin", "dueno", "local", "consulta"];
+  if (MODULE_FLAGS.onlineSales) roles.push("web");
+  if (MODULE_FLAGS.workshop) roles.push("taller");
+  // Conservar roles anteriores al editar permisos evita reasignarlos sin elegirlo.
+  if (["web", "taller"].includes(selected) && !roles.includes(selected)) roles.push(selected);
+  return roles
     .map((role) => `<option value="${role}" ${role === selected ? "selected" : ""}>${userRoleLabels[role] || role}</option>`)
     .join("");
 }
@@ -10931,7 +10751,7 @@ function saveFixedExpenseTemplatesFromSettings() {
       concept: String(field("concept")?.value || "").trim() || template.concept,
       category: field("category")?.value || template.category,
       area: "local",
-      amount: Number(field("amount")?.value || 0),
+      amount: parseMoneyInput(field("amount")?.value || 0),
       disabled: false,
     };
   });
@@ -10968,7 +10788,6 @@ async function saveBusinessSettingsFromForm(form) {
   const nextSettings = businessSettings({
     businessSettings: {
       ...businessSettings(),
-      mercadoPagoCommissionRate: Number(data.mercadoPagoCommissionRate || 0),
       missingCostFallbackRate: missingCostFallbackRateFromPercent(data.missingCostFallbackPercent),
       promoDiscounts: { ...defaultBusinessSettings.promoDiscounts },
     },
@@ -11576,110 +11395,6 @@ function downloadBlob(filename, blob) {
   link.click();
   link.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
-function textFromBytes(bytes) {
-  return new TextDecoder().decode(bytes);
-}
-
-function uintFromBytes(bytes, offset, length) {
-  let value = 0;
-  for (let index = 0; index < length; index += 1) {
-    value |= bytes[offset + index] << (index * 8);
-  }
-  return value >>> 0;
-}
-
-async function inflateZipEntry(bytes) {
-  if (!("DecompressionStream" in window)) throw new Error("El navegador no puede descomprimir este respaldo.");
-  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
-  return new Uint8Array(await new Response(stream).arrayBuffer());
-}
-
-async function readZipTextFiles(arrayBuffer) {
-  const bytes = new Uint8Array(arrayBuffer);
-  const files = {};
-  let offset = 0;
-  while (offset + 30 <= bytes.length) {
-    const signature = uintFromBytes(bytes, offset, 4);
-    if (signature !== 0x04034b50) break;
-    const method = uintFromBytes(bytes, offset + 8, 2);
-    const compressedSize = uintFromBytes(bytes, offset + 18, 4);
-    const fileNameLength = uintFromBytes(bytes, offset + 26, 2);
-    const extraLength = uintFromBytes(bytes, offset + 28, 2);
-    const nameStart = offset + 30;
-    const dataStart = nameStart + fileNameLength + extraLength;
-    const dataEnd = dataStart + compressedSize;
-    if (dataEnd > bytes.length) throw new Error("El archivo de respaldo esta incompleto.");
-    const name = textFromBytes(bytes.slice(nameStart, nameStart + fileNameLength));
-    const dataBytes = bytes.slice(dataStart, dataEnd);
-    if (method === 0) {
-      files[name] = textFromBytes(dataBytes);
-    } else if (method === 8) {
-      files[name] = textFromBytes(await inflateZipEntry(dataBytes));
-    } else {
-      throw new Error("El respaldo tiene compresion no compatible.");
-    }
-    offset = dataEnd;
-  }
-  return files;
-}
-
-function worksheetPathForBackup(files) {
-  const workbook = files["xl/workbook.xml"] || "";
-  const rels = files["xl/_rels/workbook.xml.rels"] || "";
-  const sheetMatch = workbook.match(/<sheet\b[^>]*name="Backup JSON"[^>]*r:id="([^"]+)"/)
-    || workbook.match(/<sheet\b[^>]*r:id="([^"]+)"[^>]*name="Backup JSON"/);
-  if (sheetMatch) {
-    const relMatch = rels.match(new RegExp(`<Relationship\\b[^>]*Id="${sheetMatch[1]}"[^>]*Target="([^"]+)"`));
-    if (relMatch) {
-      const target = relMatch[1].replace(/^\/+/, "");
-      return target.startsWith("xl/") ? target : `xl/${target}`;
-    }
-  }
-  return files["xl/worksheets/sheet8.xml"] ? "xl/worksheets/sheet8.xml" : "";
-}
-
-function worksheetRowsFromXml(xml) {
-  const doc = new DOMParser().parseFromString(xml, "application/xml");
-  if (doc.getElementsByTagName("parsererror").length) throw new Error("No se pudo leer la hoja Backup JSON.");
-  return Array.from(doc.getElementsByTagName("row")).map((row) =>
-    Array.from(row.getElementsByTagName("c")).map((cell) => {
-      const textNode = cell.getElementsByTagName("t")[0];
-      const valueNode = cell.getElementsByTagName("v")[0];
-      return textNode ? textNode.textContent : valueNode ? valueNode.textContent : "";
-    })
-  );
-}
-
-async function backupJsonFromXlsx(arrayBuffer) {
-  const files = await readZipTextFiles(arrayBuffer);
-  const backupPath = worksheetPathForBackup(files);
-  if (!backupPath || !files[backupPath]) throw new Error("No encontre la hoja Backup JSON en este Excel.");
-  const rows = worksheetRowsFromXml(files[backupPath]);
-  const json = rows.slice(1).map((row) => row[1] || "").join("");
-  if (!json.trim()) throw new Error("La hoja Backup JSON esta vacia.");
-  return json;
-}
-
-async function importBackupFile(file) {
-  if (!file) return;
-  const confirmed = confirm("Importar este respaldo reemplaza todos los datos actuales. ¿Continuar?");
-  if (!confirmed) return;
-  try {
-    const imported = JSON.parse(await backupJsonFromXlsx(await file.arrayBuffer()));
-    state = normalizeState(imported);
-    state.activeView = "settings";
-    logActivity("backup", "Importo respaldo", file?.name || "Archivo Excel");
-    saveState();
-    render();
-    showActionToast("Respaldo importado correctamente.");
-  } catch (error) {
-    alert(`No se pudo importar el respaldo: ${error.message}`);
-  } finally {
-    const input = document.getElementById("importBackupInput");
-    if (input) input.value = "";
-  }
 }
 
 function buildExcelBackupWorkbook({
@@ -12871,18 +12586,14 @@ document.addEventListener("click", async (event) => {
   if (event.target.id === "confirmOnlineMissingButton") confirmOnlineMissingResolved();
   if (event.target.id === "openFixedExpensesButton") openFixedExpensesModal();
   if (event.target.id === "closeFixedExpensesModal" || event.target.id === "cancelFixedExpensesModal" || event.target.id === "fixedExpensesModal") closeFixedExpensesModal();
-  if (event.target.id === "confirmFixedExpensesButton") confirmFixedExpenses();
+  if (event.target.id === "confirmFixedExpensesButton" && await confirmFixedExpenses()) closeFixedExpensesModal();
   if (event.target.id === "closeSelectedMonthButton") closeSelectedMonth();
   if (event.target.dataset.deleteMonthlyClosure) deleteMonthlyClosure(event.target.dataset.deleteMonthlyClosure);
   if (event.target.id === "exportExcelBackupButton") exportExcelBackup();
-  if (event.target.id === "importBackupButton") document.getElementById("importBackupInput")?.click();
   if (event.target.id === "openSettingsButton" || event.target.closest("#openSettingsButton")) openSettingsPasswordModal();
   if (event.target.id === "closeSettingsPasswordModal" || event.target.id === "cancelSettingsPasswordModal" || event.target.id === "settingsPasswordModal") closeSettingsPasswordModal();
   if (event.target.id === "openActivityLogButton") openActivityLogModal();
   if (event.target.id === "closeActivityLogModal" || event.target.id === "closeActivityLogButton" || event.target.id === "activityLogModal") closeActivityLogModal();
-  if (event.target.id === "openRemoteBackupsButton") openRemoteBackupsModal();
-  if (event.target.id === "publishLocalPrimaryButton") confirmPublishLocalStateAsPrimary();
-  if (event.target.id === "closeRemoteBackupsModal" || event.target.id === "closeRemoteBackupsButton" || event.target.id === "remoteBackupsModal") closeRemoteBackupsModal();
   if (event.target.id === "addFixedExpenseTemplateButton") addFixedExpenseTemplate();
   if (event.target.id === "saveFixedExpenseTemplatesButton") saveFixedExpenseTemplatesFromSettings();
   if (event.target.id === "addProductCategorySettingButton") addProductCategorySetting();
@@ -12893,16 +12604,6 @@ document.addEventListener("click", async (event) => {
   if (event.target.id === "closeSaleInfoModal" || event.target.id === "closeSaleInfoButton" || event.target.id === "saleInfoModal") closeSaleInfoModal();
   if (event.target.dataset.deleteFixedTemplate) deleteFixedExpenseTemplate(event.target.dataset.deleteFixedTemplate);
   if (event.target.dataset.deleteProductCategory) deleteProductCategorySetting(event.target.dataset.deleteProductCategory);
-  if (event.target.dataset.restoreRemoteBackup) {
-    const backupKey = event.target.dataset.restoreRemoteBackup;
-    openConfirmModal({
-      title: "Restaurar respaldo",
-      message: "Esto reemplaza los datos actuales por el respaldo elegido. Antes de restaurar se guarda una copia del estado actual.",
-      confirmText: "Restaurar",
-      danger: true,
-      onConfirm: () => restoreRemoteBackup(backupKey),
-    });
-  }
   const pickedCustomerButton = event.target.closest("[data-pick-customer]");
   if (pickedCustomerButton) selectCustomerForTarget(pickedCustomerButton.dataset.pickCustomer);
   if (event.target.dataset.infoCustomer) openCustomerInfoModal(event.target.dataset.infoCustomer);
@@ -13280,10 +12981,6 @@ document.addEventListener("mousedown", (event) => {
 });
 
 document.addEventListener("change", async (event) => {
-  if (event.target.id === "importBackupInput") {
-    importBackupFile(event.target.files?.[0]);
-    return;
-  }
   if (event.target.id === "productImageFiles") {
     await addProductImageFiles(event.target.files);
     event.target.value = "";
