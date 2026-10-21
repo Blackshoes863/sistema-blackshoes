@@ -221,6 +221,7 @@ const cloudProductsCache = new Map();
 const cloudProductsLoads = new Map();
 const cloudProductsFailures = new Map();
 const cloudProductsMetaCache = new Map();
+let cloudProductsRevision = 0;
 const cloudCustomersCache = new Map();
 const cloudCustomersLoads = new Map();
 const cloudCustomersFailures = new Map();
@@ -6358,6 +6359,7 @@ async function loadCloudProductsPage(filters = state.productFilters || {}, page 
   if (cloudProductsLoads.has(key)) return cloudProductsLoads.get(key);
   const recentFailureAt = cloudProductsFailures.get(key) || 0;
   if (!force && Date.now() - recentFailureAt < 30000) return null;
+  const revision = cloudProductsRevision;
   const load = (async () => {
     const { data, error } = await supabaseClient.rpc("list_products_page", {
       p_query: request.query,
@@ -6369,6 +6371,7 @@ async function loadCloudProductsPage(filters = state.productFilters || {}, page 
       p_page: request.page,
       p_page_size: request.pageSize,
     });
+    if (revision !== cloudProductsRevision) return null;
     if (error) throw new Error(`productos: ${error.message}`);
     const rows = mergeCloudProductsIntoState(data?.rows || []);
     const result = {
@@ -6388,11 +6391,11 @@ async function loadCloudProductsPage(filters = state.productFilters || {}, page 
   try {
     return await load;
   } catch (error) {
-    cloudProductsFailures.set(key, Date.now());
+    if (revision === cloudProductsRevision) cloudProductsFailures.set(key, Date.now());
     console.warn("Cloud products failed", error);
     return null;
   } finally {
-    cloudProductsLoads.delete(key);
+    if (cloudProductsLoads.get(key) === load) cloudProductsLoads.delete(key);
   }
 }
 
@@ -6430,9 +6433,23 @@ function prefetchAdjacentCloudProductsPages(filters = state.productFilters || {}
 }
 
 function invalidateCloudProductsCache() {
+  cloudProductsRevision += 1;
   cloudProductsCache.clear();
+  cloudProductsLoads.clear();
   cloudProductsFailures.clear();
   cloudProductsMetaCache.clear();
+}
+
+let priceUpdateInProgress = false;
+let priceUpdateOperation = null;
+let priceUpdatePreviewRevision = 0;
+let priceUpdatePreviewKey = "";
+
+function priceUpdateCategory() {
+  const scope = document.getElementById("priceUpdateScope")?.value || "all";
+  const category = String(document.getElementById("priceUpdateCategory")?.value || "").trim();
+  if (scope === "category" && !category) throw new Error("Elegi una categoria.");
+  return scope === "category" ? category : null;
 }
 
 function productsForPriceUpdate() {
@@ -6444,25 +6461,59 @@ function productsForPriceUpdate() {
   return state.products.filter((product) => !isAccessoryCategory(product.category));
 }
 
-function updatePriceUpdatePreview() {
+async function updatePriceUpdatePreview({ force = false } = {}) {
   const scope = document.getElementById("priceUpdateScope")?.value || "all";
   document.querySelector(".price-category-field")?.classList.toggle("is-hidden", scope !== "category");
-  const products = productsForPriceUpdate();
   const preview = document.getElementById("priceUpdatePreview");
-  if (preview) preview.textContent = `Se modificarán ${products.length} ${products.length === 1 ? "Producto" : "Productos"}.`;
+  const button = document.getElementById("applyPriceUpdateButton");
+  if (!preview) return;
+  if (!CLOUD_DATA_ENABLED) {
+    const products = productsForPriceUpdate();
+    preview.textContent = `Se modificarán ${products.length} ${products.length === 1 ? "Producto" : "Productos"}.`;
+    if (button) button.disabled = priceUpdateInProgress || products.length === 0;
+    return;
+  }
+  let revision;
+  try {
+    const category = priceUpdateCategory();
+    const key = JSON.stringify({ category });
+    if (!force && priceUpdatePreviewKey === key) return;
+    revision = ++priceUpdatePreviewRevision;
+    priceUpdatePreviewKey = key;
+    if (button) button.disabled = true;
+    preview.textContent = "Consultando productos...";
+    if (!cloudEnabledWithSession()) throw new Error("Ingresa para consultar los productos.");
+    const { data, error } = await supabaseClient.rpc("get_product_price_update_preview", { p_category: category });
+    if (revision !== priceUpdatePreviewRevision) return;
+    if (error) throw new Error(error.message);
+    const count = Number(data?.totalCount);
+    if (!Number.isInteger(count) || count < 0) throw new Error("No pude obtener la cantidad de productos.");
+    preview.textContent = `Se modificarán ${count} ${count === 1 ? "Producto" : "Productos"}.`;
+    if (button) button.disabled = priceUpdateInProgress || count === 0;
+  } catch (error) {
+    if (revision !== undefined && revision !== priceUpdatePreviewRevision) return;
+    priceUpdatePreviewRevision += 1;
+    priceUpdatePreviewKey = "";
+    preview.textContent = `No pude consultar los productos: ${error.message}`;
+    if (button) button.disabled = true;
+  }
 }
 
 function openPriceUpdateModal() {
+  if (priceUpdateInProgress) return;
   const form = document.getElementById("priceUpdateForm");
   form.reset();
   renderPriceUpdateCategorySelect();
-  updatePriceUpdatePreview();
+  updatePriceUpdatePreview({ force: true });
   const modal = document.getElementById("priceUpdateModal");
   modal.classList.add("open");
   modal.setAttribute("aria-hidden", "false");
 }
 
 function closePriceUpdateModal() {
+  if (priceUpdateInProgress) return;
+  priceUpdatePreviewRevision += 1;
+  priceUpdatePreviewKey = "";
   const modal = document.getElementById("priceUpdateModal");
   modal.classList.remove("open");
   modal.setAttribute("aria-hidden", "true");
@@ -6600,14 +6651,78 @@ async function saveProductUpdatingCost() {
   closeStockCostUpdateModal();
 }
 
-function applyPriceUpdate(percent) {
-  const products = productsForPriceUpdate();
-  products.forEach((product) => {
-    product.price = Math.round(Number(product.price || 0) * (1 + percent / 100));
-  });
-  logActivity("product", "Modifico precios", `${products.length} productos (${percent}%)`);
-  saveState();
-  render();
+async function applyPriceUpdate(percent) {
+  if (priceUpdateInProgress) return false;
+  if (!Number.isFinite(percent) || percent < -100 || percent === 0) {
+    alert("Ingresa un porcentaje distinto de cero, mayor o igual a -100%.");
+    return false;
+  }
+  const form = document.getElementById("priceUpdateForm");
+  const controls = Array.from(form?.elements || []).map((element) => [element, element.disabled]);
+  const button = document.getElementById("applyPriceUpdateButton");
+  const label = button?.textContent;
+  let confirmedInCloud = false;
+  priceUpdateInProgress = true;
+  controls.forEach(([element]) => { element.disabled = true; });
+  if (button) button.textContent = "Actualizando precios...";
+  try {
+    let count;
+    if (CLOUD_DATA_ENABLED) {
+      if (!cloudEnabledWithSession()) throw new Error("Ingresa con tu usuario para actualizar precios.");
+      const category = priceUpdateCategory();
+      const key = JSON.stringify({ category, percent });
+      if (priceUpdateOperation?.key !== key) priceUpdateOperation = { key, id: cloudOperationId() };
+      const { data, error } = await supabaseClient.rpc("update_product_prices", {
+        p_operation_id: priceUpdateOperation.id,
+        p_percent: percent,
+        p_category: category,
+      });
+      if (error) throw new Error(error.message);
+      if (!Number.isInteger(data?.updatedCount) || data.updatedCount < 0 || !Array.isArray(data?.products)
+        || data.products.length !== data.updatedCount
+        || data.products.some((product) => !product.id || !Number.isFinite(Number(product.price)) || Number(product.price) < 0)) {
+        throw new Error("Supabase no confirmo la actualizacion de precios.");
+      }
+      count = data.updatedCount;
+      confirmedInCloud = true;
+      const changed = new Map(data.products.map((product) => [product.id, product]));
+      state.products.forEach((product) => {
+        const saved = changed.get(product.id);
+        if (saved) {
+          product.price = Number(saved.price);
+          product.updatedAt = saved.updated_at;
+        }
+      });
+      invalidateCloudProductsCache();
+      persistStateLocalOnly();
+      await loadCloudProductsPage(state.productFilters, state.productPage || 1, { force: true });
+    } else {
+      const products = productsForPriceUpdate();
+      products.forEach((product) => {
+        product.price = Math.round(Number(product.price || 0) * (1 + percent / 100));
+      });
+      count = products.length;
+    }
+    logActivity("product", "Modifico precios", `${count} productos (${percent}%)`);
+    if (CLOUD_DATA_ENABLED) persistStateLocalOnly();
+    else saveState();
+    render();
+    showActionToast(count ? `Precios actualizados: ${count} ${count === 1 ? "producto" : "productos"}.` : "No hay productos para actualizar.");
+    priceUpdateOperation = null;
+    return true;
+  } catch (error) {
+    if (confirmedInCloud) {
+      priceUpdateOperation = null;
+      alert(`Los precios se guardaron en Supabase, pero no pude refrescar la vista. Recarga el sistema antes de seguir: ${error.message}`);
+      return true;
+    }
+    alert(`No pude actualizar los precios: ${error.message}`);
+    return false;
+  } finally {
+    priceUpdateInProgress = false;
+    controls.forEach(([element, disabled]) => { element.disabled = disabled; });
+    if (button) button.textContent = label;
+  }
 }
 
 function stockTrackedProducts() {
@@ -13589,11 +13704,10 @@ document.getElementById("productForm").addEventListener("submit", async (event) 
   commitProductFormSave({ existing, updatedProduct, stockDraft, now });
 });
 
-document.getElementById("priceUpdateForm").addEventListener("submit", (event) => {
+document.getElementById("priceUpdateForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const data = formDataObject(event.target);
-  applyPriceUpdate(Number(data.percent || 0));
-  closePriceUpdateModal();
+  if (await applyPriceUpdate(Number(data.percent || 0))) closePriceUpdateModal();
 });
 
 document.getElementById("stockEntryForm").addEventListener("submit", (event) => {

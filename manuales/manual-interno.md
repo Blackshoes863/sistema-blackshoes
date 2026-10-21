@@ -104,3 +104,17 @@ Aplicar `supabase/migrations/202610150003_manual_sale_cost.sql`.
 - La migracion no recalcula ni modifica los importes de ventas anteriores.
 
 Pruebas: `node --test tests/manual-sale-cost.test.cjs`.
+
+## Actualizacion masiva de precios
+
+Aplicar `supabase/migrations/202610210001_product_price_update.sql`.
+
+- Modificar Precios consulta y actualiza toda la base mediante RPC, no solo las paginas cargadas en el navegador.
+- Permite todos los productos o una categoria; excluye archivados y el producto interno de ventas manuales. Incluye productos publicados, no publicados y sin stock.
+- Aplica el porcentaje al precio de venta base y redondea a pesos enteros. No modifica costos, promociones, precio mayorista, stock, imagenes ni ventas anteriores.
+- PostgreSQL guarda todo en una transaccion y registra precios anteriores/nuevos en `audit_log`. Solo personal activo puede ejecutar la operacion.
+- Un reintento con el mismo identificador y parametros devuelve el resultado guardado sin aplicar dos veces el porcentaje. El boton queda bloqueado mientras se guarda.
+- La cantidad de productos de la vista previa viene de Supabase. Tras guardar se invalida la cache y se recarga la pagina; las respuestas anteriores se descartan.
+- Si falta aplicar la migracion o Supabase rechaza el cambio, se informa el error y el formulario queda abierto.
+
+Pruebas: `node --test tests/product-price-update.test.cjs`.
