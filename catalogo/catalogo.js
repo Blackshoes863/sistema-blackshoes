@@ -368,6 +368,14 @@ function productGallery(product) {
     <section class="product-gallery" data-product-gallery>
       <div class="gallery-stage">
         <img class="gallery-main-image" data-gallery-main src="${escapeHtml(firstImage)}" alt="${escapeHtml(`${product.name} foto 1`)}">
+        ${images.length > 1 ? `
+          <button class="gallery-arrow gallery-arrow-prev" data-gallery-delta="-1" type="button" aria-label="Foto anterior" title="Foto anterior">
+            <img src="/assets/lucide-chevron-left.svg" width="24" height="24" alt="" aria-hidden="true">
+          </button>
+          <button class="gallery-arrow gallery-arrow-next" data-gallery-delta="1" type="button" aria-label="Foto siguiente" title="Foto siguiente">
+            <img src="/assets/lucide-chevron-right.svg" width="24" height="24" alt="" aria-hidden="true">
+          </button>
+        ` : ""}
       </div>
       ${images.length > 1 ? `
         <div class="gallery-thumbs" aria-label="Fotos del producto">
@@ -383,6 +391,23 @@ function productGallery(product) {
       ` : ""}
     </section>
   `;
+}
+
+function selectGalleryImage(gallery, index) {
+  const mainImage = gallery?.querySelector("[data-gallery-main]");
+  const thumbs = Array.from(gallery?.querySelectorAll("[data-gallery-thumb]") || []);
+  if (!mainImage || !thumbs.length || !Number.isInteger(index)) return;
+  const selected = thumbs[((index % thumbs.length) + thumbs.length) % thumbs.length];
+  if (!selected.dataset.galleryImage) return;
+  mainImage.src = selected.dataset.galleryImage;
+  mainImage.alt = selected.dataset.galleryAlt || mainImage.alt;
+  thumbs.forEach((button) => button.setAttribute("aria-current", String(button === selected)));
+}
+
+function moveGalleryImage(gallery, delta) {
+  const thumbs = Array.from(gallery?.querySelectorAll("[data-gallery-thumb]") || []);
+  const current = Math.max(0, thumbs.findIndex((button) => button.getAttribute("aria-current") === "true"));
+  selectGalleryImage(gallery, current + delta);
 }
 
 function applyBusinessSettings(data = {}) {
@@ -683,20 +708,27 @@ document.addEventListener("click", (event) => {
     goToCatalogPage(pageButton.dataset.catalogPage ?? (catalogCurrentPage + Number(pageButton.dataset.catalogPageDelta || 0)));
     return;
   }
+  const galleryArrow = event.target.closest("[data-gallery-delta]");
+  if (galleryArrow) {
+    moveGalleryImage(galleryArrow.closest("[data-product-gallery]"), Number(galleryArrow.dataset.galleryDelta));
+    return;
+  }
   const galleryThumb = event.target.closest("[data-gallery-thumb]");
   if (galleryThumb) {
     const gallery = galleryThumb.closest("[data-product-gallery]");
-    const mainImage = gallery?.querySelector("[data-gallery-main]");
-    if (mainImage && galleryThumb.dataset.galleryImage) {
-      mainImage.src = galleryThumb.dataset.galleryImage;
-      mainImage.alt = galleryThumb.dataset.galleryAlt || mainImage.alt;
-      gallery.querySelectorAll("[data-gallery-thumb]").forEach((button) => button.setAttribute("aria-current", "false"));
-      galleryThumb.setAttribute("aria-current", "true");
-    }
+    const thumbs = Array.from(gallery?.querySelectorAll("[data-gallery-thumb]") || []);
+    selectGalleryImage(gallery, thumbs.indexOf(galleryThumb));
     return;
   }
   const sizeButton = event.target.closest("[data-select-size]");
   if (sizeButton) renderProductDetail(sizeButton.dataset.selectSize);
+});
+document.addEventListener("keydown", (event) => {
+  if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+  const gallery = event.target.closest("[data-product-gallery]");
+  if (!gallery) return;
+  event.preventDefault();
+  moveGalleryImage(gallery, event.key === "ArrowLeft" ? -1 : 1);
 });
 document.addEventListener("change", (event) => {
   if (event.target.id === "productColorSelect") {

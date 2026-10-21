@@ -427,6 +427,7 @@ button.size-chip {
 }
 
 .gallery-stage {
+  position: relative;
   display: grid;
   place-items: center;
   aspect-ratio: 4 / 5;
@@ -434,6 +435,30 @@ button.size-chip {
   border-radius: 8px;
   background: #f6f3ee;
 }
+
+.gallery-arrow {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid #d7ddd8;
+  border-radius: 50%;
+  background: #fffffff2;
+  color: #111;
+  box-shadow: 0 2px 8px #00000014;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.gallery-arrow-prev { left: 10px; }
+.gallery-arrow-next { right: 10px; }
+.gallery-arrow:hover { background: #d9ecd9; }
+.gallery-arrow:focus-visible { outline: 2px solid #111; outline-offset: 3px; }
+.gallery-arrow img { display: block; width: 24px; height: 24px; }
 
 .gallery-main-image {
   width: 100%;
