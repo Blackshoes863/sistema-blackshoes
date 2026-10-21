@@ -156,3 +156,13 @@ Aplicar `supabase/migrations/202610210003_fixed_expenses.sql`.
 
 Pruebas frontend: `node --test tests/fixed-expenses.test.cjs`.
 La prueba PostgreSQL `tests/fixed-expenses-postgres.test.cjs` usa un runtime PGlite temporal indicado en `BLACKSHOES_PGLITE_MODULE`; no agrega una dependencia de produccion ni necesita credenciales reales. Valida atomicidad, reintentos, actualizacion mensual, permisos y clasificacion en las lecturas.
+
+## Vista reciente del historial de stock
+
+- Al abrir el historial se muestran los ultimos 200 movimientos que coincidan con producto/tipo, paginados de 20 en 20. Los campos Desde/Hasta empiezan vacios.
+- Al completar Desde o Hasta, se consulta el rango elegido sin el limite visual de 200, manteniendo la paginacion de Supabase. Limpiar ambas fechas vuelve a la vista reciente.
+- Solo se descargan las paginas solicitadas. La cache distingue producto, tipo, busqueda, fechas y pagina; volver a una pagina descargada la reutiliza.
+- La copia operativa local conserva hasta 200 movimientos recientes. Sin conexion solo se consulta esa copia, no se recupera historial antiguo.
+- No se borran filas de `stock_movements`, no se modifica el stock ni la auditoria. Es un limite de visualizacion y cache local; no requiere migracion SQL.
+
+Pruebas: `node --test tests/stock-history-window.test.cjs`.

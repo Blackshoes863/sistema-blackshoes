@@ -183,7 +183,7 @@ const PAGE_SIZE = 40;
 const PRODUCT_PAGE_SIZE = 30;
 const CUSTOMER_PAGE_SIZE = 40;
 const SALES_HISTORY_PAGE_SIZE = 20;
-const STOCK_HISTORY_LIMIT = 100;
+const STOCK_HISTORY_LIMIT = 200;
 const STOCK_HISTORY_PAGE_SIZE = 20;
 const ACTIVITY_LOG_LIMIT = 200;
 const ACTIVITY_LOG_PAGE_SIZE = 40;
@@ -1796,6 +1796,10 @@ function stockHistoryFiltersFromInputs() {
   };
 }
 
+function stockHistoryViewLimit(filters) {
+  return filters.from || filters.to ? Infinity : STOCK_HISTORY_LIMIT;
+}
+
 function cloudStockHistoryRequest(filters = stockHistoryFiltersFromInputs(), page = state.stockHistoryPage || 1) {
   const productId = filters.productId && filters.productId !== "all" && isUuid(filters.productId)
     ? filters.productId
@@ -1806,7 +1810,7 @@ function cloudStockHistoryRequest(filters = stockHistoryFiltersFromInputs(), pag
     type: filters.type || "all",
     from: filters.from || "",
     to: filters.to || "",
-    page: Math.max(1, Number(page || 1)),
+    page: Math.min(Math.max(1, Number(page || 1)), Math.ceil(stockHistoryViewLimit(filters) / STOCK_HISTORY_PAGE_SIZE)),
     pageSize: STOCK_HISTORY_PAGE_SIZE,
   };
 }
@@ -1847,8 +1851,8 @@ async function loadCloudStockHistoryPage(filters = stockHistoryFiltersFromInputs
     });
     if (error) throw new Error(`historial de stock: ${error.message}`);
     const result = {
-      rows: (data?.rows || []).map(normalizeCloudStockMovement),
-      totalCount: Number(data?.totalCount || 0),
+      rows: (data?.rows || []).slice(0, Math.max(0, stockHistoryViewLimit(filters) - (request.page - 1) * request.pageSize)).map(normalizeCloudStockMovement),
+      totalCount: Math.min(Number(data?.totalCount || 0), stockHistoryViewLimit(filters)),
       page: Number(data?.page || request.page),
       pageSize: Number(data?.pageSize || request.pageSize),
       loadedAt: Date.now(),
@@ -6841,8 +6845,10 @@ function renderStockHistoryFilters() {
 
 function renderStockHistoryTable() {
   const filters = stockHistoryFiltersFromInputs();
-  const cloudPage = cachedCloudStockHistoryPage(filters, state.stockHistoryPage);
-  if (cloudEnabledWithSession()) requestCloudStockHistoryPage(filters, state.stockHistoryPage);
+  const requestedPage = cloudStockHistoryRequest(filters, state.stockHistoryPage).page;
+  const cloudPage = cachedCloudStockHistoryPage(filters, requestedPage);
+  const knownPage = cloudPage || cachedCloudStockHistoryPage(filters, 1);
+  const waitingCloudPage = cloudEnabledWithSession() && !cloudPage;
   const productQuery = String(filters.productQuery || "").trim().toLowerCase();
   const localRows = state.stockHistory
     .filter((item) => {
@@ -6854,14 +6860,16 @@ function renderStockHistoryTable() {
     .filter((item) => !filters.from || item.date >= filters.from)
     .filter((item) => !filters.to || item.date <= filters.to)
     .slice()
-    .reverse();
-  const rows = cloudPage ? cloudPage.rows : localRows;
-  const totalItems = cloudPage ? cloudPage.totalCount : localRows.length;
+    .reverse()
+    .slice(0, stockHistoryViewLimit(filters));
+  const totalItems = knownPage ? knownPage.totalCount : waitingCloudPage ? requestedPage * STOCK_HISTORY_PAGE_SIZE : localRows.length;
   const totalPages = Math.max(1, Math.ceil(totalItems / STOCK_HISTORY_PAGE_SIZE));
-  const current = Math.min(Math.max(1, Number(state.stockHistoryPage || 1)), totalPages);
-  const start = cloudPage ? 0 : (current - 1) * STOCK_HISTORY_PAGE_SIZE;
-  const pageRows = cloudPage ? rows : rows.slice(start, start + STOCK_HISTORY_PAGE_SIZE);
+  const current = Math.min(requestedPage, totalPages);
   state.stockHistoryPage = current;
+  const currentCloudPage = current === requestedPage ? cloudPage : cachedCloudStockHistoryPage(filters, current);
+  if (cloudEnabledWithSession()) requestCloudStockHistoryPage(filters, current);
+  const start = (current - 1) * STOCK_HISTORY_PAGE_SIZE;
+  const pageRows = currentCloudPage ? currentCloudPage.rows : cloudEnabledWithSession() ? [] : localRows.slice(start, start + STOCK_HISTORY_PAGE_SIZE);
   document.getElementById("stockHistoryTable").innerHTML = pageRows.map((item) => `
     <tr>
       <td>${formatDateShort(item.date)}</td>
@@ -6871,7 +6879,7 @@ function renderStockHistoryTable() {
       <td>${item.stockAfter}</td>
       <td>${item.note || "-"}</td>
     </tr>
-  `).join("") || `<tr><td colspan="6">${cloudEnabledWithSession() && !cloudPage ? "Cargando movimientos..." : "Sin Movimientos para esos Filtros."}</td></tr>`;
+  `).join("") || `<tr><td colspan="6">${cloudEnabledWithSession() && !currentCloudPage ? "Cargando movimientos..." : "Sin Movimientos para esos Filtros."}</td></tr>`;
   const pagination = document.getElementById("stockHistoryPagination");
   if (pagination) pagination.innerHTML = stockHistoryPaginationControls(current, totalPages, totalItems);
 }
@@ -6879,8 +6887,8 @@ function renderStockHistoryTable() {
 function openStockHistoryModal() {
   state.stockHistoryPage = 1;
   renderStockHistoryFilters();
-  setDateInput(document.getElementById("stockHistoryFrom"), monthAgoIso());
-  setDateInput(document.getElementById("stockHistoryTo"), todayIso());
+  setDateInput(document.getElementById("stockHistoryFrom"), "");
+  setDateInput(document.getElementById("stockHistoryTo"), "");
   renderStockHistoryTable();
   const modal = document.getElementById("stockHistoryModal");
   modal.classList.add("open");
