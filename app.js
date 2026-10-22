@@ -4688,10 +4688,10 @@ function customerDuplicateLabel(customer) {
   return `Ficha ${index + 1}/${group.length}`;
 }
 
-function customerMetaLabel(customer, { includeFallbackPhone = false } = {}) {
+function customerMetaLabel(customer, { includeFallbackPhone = false, includePhone = true } = {}) {
   const duplicate = customerDuplicateLabel(customer);
   const dni = customer.dni ? `DNI ${formatCustomerDni(customer.dni)}` : "";
-  const phone = customer.phone || (includeFallbackPhone ? "Sin Teléfono" : "");
+  const phone = includePhone ? customer.phone || (includeFallbackPhone ? "Sin Teléfono" : "") : "";
   return [duplicate, dni, phone, customer.province].filter(Boolean).join(" - ");
 }
 
@@ -9631,7 +9631,7 @@ function customerWhatsappButton(customer) {
   const href = customerWhatsappUrl(customer);
   if (!href) return "";
   const label = htmlAttr(`Hablar por WhatsApp con ${customer.name || "cliente"}`);
-  return `<a class="customer-whatsapp" href="${href}" target="_blank" rel="noopener noreferrer" aria-label="${label}" title="${label}"><img src="assets/whatsapp.svg" width="20" height="20" alt="" aria-hidden="true"></a>`;
+  return `<a class="customer-whatsapp" href="${href}" target="_blank" rel="noopener noreferrer" aria-label="${label}" title="${label}"><img src="assets/whatsapp.svg" width="18" height="18" alt="" aria-hidden="true"><span>${htmlAttr(customer.phone)}</span></a>`;
 }
 
 function renderCustomers() {
@@ -9677,15 +9677,17 @@ function renderCustomers() {
   table.innerHTML = pageRows.map((customer) => {
     const stats = customerStats(customer);
     const note = String(customer.notes || "").trim();
+    const meta = customerMetaLabel(customer, { includePhone: false });
+    const contact = customerWhatsappButton(customer) || `<small>${htmlAttr(customer.phone || "Sin Teléfono")}</small>`;
     return `
       <tr>
         <td>
           <div class="customer-name-line">
             <strong>${htmlAttr(customer.name)}${customerDuplicateLabel(customer) ? ` <span class="customer-duplicate-badge">${customerDuplicateLabel(customer)}</span>` : ""}</strong>
-            ${customerWhatsappButton(customer)}
           </div>
-          <small>${htmlAttr(customerMetaLabel(customer, { includeFallbackPhone: true }))}</small>
-          ${note ? `<br><small class="customer-note-line">${htmlAttr(note)}</small>` : ""}
+          ${meta ? `<small class="customer-meta-line">${htmlAttr(meta)}</small>` : ""}
+          <div class="customer-contact-line">${contact}</div>
+          ${note ? `<small class="customer-note-line">${htmlAttr(note)}</small>` : ""}
         </td>
         <td>${stats.salesCount}</td>
         <td>${money(stats.total)}</td>
