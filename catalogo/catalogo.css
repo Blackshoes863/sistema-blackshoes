@@ -179,8 +179,8 @@ select {
   width: calc(100% + 28px);
   margin: 0 -14px;
   aspect-ratio: 4 / 5;
-  object-fit: contain;
-  background: #f6f3ee;
+  object-fit: cover;
+  background: #151515;
 }
 
 .placeholder {
@@ -504,7 +504,7 @@ button.size-chip {
 .gallery-thumb img {
   width: 100%;
   height: 100%;
-  object-fit: contain;
+  object-fit: cover;
 }
 
 .product-info {
@@ -551,9 +551,9 @@ button.size-chip {
 .mini-image {
   width: 100%;
   aspect-ratio: 1;
-  object-fit: contain;
+  object-fit: cover;
   border-radius: 8px;
-  background: #f6f3ee;
+  background: #151515;
 }
 
 @media (max-width: 780px) {
