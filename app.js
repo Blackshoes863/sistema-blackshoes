@@ -9608,6 +9608,32 @@ function deleteCustomer(customerId) {
   });
 }
 
+function customerWhatsappUrl(customer) {
+  const raw = String(customer?.phone || "").trim();
+  if (!/^\+?[\d\s().-]+$/.test(raw)) return "";
+  let digits = raw.replace(/\D/g, "");
+  const international = raw.startsWith("+") || digits.startsWith("00");
+  if (digits.startsWith("00")) digits = digits.slice(2);
+  if (international && !digits.startsWith("54")) {
+    return /^[1-9]\d{7,14}$/.test(digits) ? `https://wa.me/${digits}` : "";
+  }
+  const argentina = digits.startsWith("54") && digits.length >= 12;
+  if (argentina) digits = digits.slice(2);
+  if (digits.startsWith("0")) digits = digits.slice(1);
+  if (digits.length === 11 && digits.startsWith("9")) digits = digits.slice(1);
+  // Telefonos argentinos: quitar el 15 local, conservar area y usar 54 9.
+  if (digits.length === 12) digits = digits.replace(/^(\d{2,4})15(\d{6,8})$/, "$1$2");
+  if (/^[1-9]\d{9}$/.test(digits)) return `https://wa.me/549${digits}`;
+  return "";
+}
+
+function customerWhatsappButton(customer) {
+  const href = customerWhatsappUrl(customer);
+  if (!href) return "";
+  const label = htmlAttr(`Hablar por WhatsApp con ${customer.name || "cliente"}`);
+  return `<a class="customer-whatsapp" href="${href}" target="_blank" rel="noopener noreferrer" aria-label="${label}" title="${label}"><img src="assets/whatsapp.svg" width="20" height="20" alt="" aria-hidden="true"></a>`;
+}
+
 function renderCustomers() {
   const table = document.getElementById("customersTable");
   if (!table) return;
@@ -9654,7 +9680,10 @@ function renderCustomers() {
     return `
       <tr>
         <td>
-          <strong>${htmlAttr(customer.name)}${customerDuplicateLabel(customer) ? ` <span class="customer-duplicate-badge">${customerDuplicateLabel(customer)}</span>` : ""}</strong><br>
+          <div class="customer-name-line">
+            <strong>${htmlAttr(customer.name)}${customerDuplicateLabel(customer) ? ` <span class="customer-duplicate-badge">${customerDuplicateLabel(customer)}</span>` : ""}</strong>
+            ${customerWhatsappButton(customer)}
+          </div>
           <small>${htmlAttr(customerMetaLabel(customer, { includeFallbackPhone: true }))}</small>
           ${note ? `<br><small class="customer-note-line">${htmlAttr(note)}</small>` : ""}
         </td>

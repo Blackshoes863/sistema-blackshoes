@@ -605,6 +605,35 @@ td.row-actions .remove-line + .remove-line {
   font-style: italic;
 }
 
+.customer-name-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.customer-name-line strong { overflow-wrap: anywhere; }
+
+.customer-whatsapp {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 34px;
+  width: 34px;
+  height: 34px;
+  border: 1px solid #157a3f;
+  border-radius: 7px;
+  background: #15803d;
+  text-decoration: none;
+}
+
+.customer-whatsapp img { display: block; width: 20px; height: 20px; filter: invert(1); }
+.customer-whatsapp:hover { background: #11652f; }
+.customer-whatsapp:focus-visible { outline: 2px solid #111; outline-offset: 3px; }
+
+@media (max-width: 780px) {
+  .customer-whatsapp { flex-basis: 44px; width: 44px; height: 44px; }
+}
+
 .customer-debt-panel {
   display: grid;
   gap: 8px;
